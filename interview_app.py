@@ -27,8 +27,8 @@ import markdown
 
 # 페이지 설정
 st.set_page_config(
-    page_title="인터뷰 트랜스크립트 자동화",
-    page_icon="🎙️",
+    page_title="캐피 인터뷰",
+    page_icon="🎀",
     layout="wide"
 )
 
@@ -248,19 +248,44 @@ def transcribe_audio(audio_file, task="transcribe"):
                 st.error("파일 분할에 실패했습니다.")
                 return None
             
-            st.success(f"✅ {len(chunks)}개 청크로 분할 완료")
+            st.success(f"✅ {len(chunks)}개 청크로 나눴어요!")
+            
+            # 예상 시간 안내
+            estimated_time = len(chunks) * 60  # 청크당 약 1분 예상
+            st.info(f"⏱️ 예상 소요 시간: 약 {estimated_time // 60}분 ~ {(estimated_time * 2) // 60}분")
             
             # 각 청크별 전사
             all_transcripts = []
-            chunk_progress = st.progress(0)
-            chunk_status = st.empty()
+            
+            # 진행 상태 표시 영역
+            progress_container = st.container()
+            with progress_container:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    chunk_progress = st.progress(0)
+                with col2:
+                    progress_percent = st.empty()
+                
+                chunk_status = st.empty()
+                chunk_detail = st.empty()
+            
+            total_start_time = time.time()
             
             for i, chunk in enumerate(chunks):
-                chunk_status.text(f"🎤 청크 {chunk['index']}/{len(chunks)} 전사 중... ({format_time(chunk['start_time'])} ~ {format_time(chunk['end_time'])})")
-                chunk_progress.progress((i) / len(chunks))
+                # 진행률 계산
+                progress_value = i / len(chunks)
+                chunk_progress.progress(progress_value)
+                progress_percent.markdown(f"**{int(progress_value * 100)}%**")
+                
+                # 상태 메시지
+                chunk_status.markdown(f"### 🎤 청크 {chunk['index']}/{len(chunks)} 받아쓰는 중...")
+                chunk_detail.text(f"📍 구간: {format_time(chunk['start_time'])} ~ {format_time(chunk['end_time'])}")
                 
                 # 청크 전사
                 chunk['data'].seek(0)
+                
+                # 전사 시작 시간 기록
+                chunk_start_time = time.time()
                 
                 try:
                     if task == "translate":
@@ -274,6 +299,13 @@ def transcribe_audio(audio_file, task="transcribe"):
                             file=("chunk.mp3", chunk['data'], "audio/mpeg")
                         )
                     
+                    # 소요 시간 계산
+                    chunk_elapsed = int(time.time() - chunk_start_time)
+                    total_elapsed = int(time.time() - total_start_time)
+                    
+                    # 완료 표시
+                    chunk_detail.text(f"✅ 청크 {chunk['index']} 완료! ({chunk_elapsed}초 소요) | 총 경과: {total_elapsed}초")
+                    
                     all_transcripts.append({
                         'index': chunk['index'],
                         'start': chunk['start_time'],
@@ -285,8 +317,12 @@ def transcribe_audio(audio_file, task="transcribe"):
                     st.warning(f"⚠️ 청크 {chunk['index']} 전사 실패: {str(e)}")
                     continue
             
+            # 최종 완료
             chunk_progress.progress(1.0)
-            chunk_status.text(f"✅ 모든 청크 전사 완료!")
+            progress_percent.markdown("**100%**")
+            total_time = int(time.time() - total_start_time)
+            chunk_status.markdown(f"### ✅ 모든 청크 받아쓰기 완료!")
+            chunk_detail.text(f"🎉 총 {len(all_transcripts)}개 청크, {total_time}초 소요")
             
             # 결과 병합
             merged_text = "\n\n".join([
@@ -521,8 +557,8 @@ def main():
     if not check_password():
         return
     
-    st.title("🎙️ 인터뷰 트랜스크립트 자동화 v3.1")
-    st.markdown("음성/텍스트 파일을 업로드하여 한글 트랜스크립트와 요약문을 자동 생성합니다.")
+    st.title("🎀 캐피 인터뷰")
+    st.markdown("안녕하세요! 인터뷰 음성/텍스트 파일 올려주시면 제가 깔끔하게 정리해드릴게요! 😊")
     st.markdown("---")
     
     # 프롬프트 로드
@@ -537,48 +573,50 @@ def main():
     # 사이드바 설정
     # ============================================
     with st.sidebar:
-        st.header("⚙️ 처리 설정")
+        st.header("⚙️ 캐피 인터뷰예요!")
         
         # 파일 유형 선택
-        st.subheader("📑 파일 유형")
+        st.subheader("📑 어떤 파일이에요?")
         file_type = st.radio(
-            "처리할 파일 유형",
-            ["🎤 음성 파일", "📄 텍스트 파일"],
-            key="file_type_radio"
+            "파일 유형 선택",
+            ["🎤 인터뷰 음성 파일!", "📄 인터뷰 텍스트!"],
+            key="file_type_radio",
+            label_visibility="collapsed"
         )
         
         st.markdown("---")
         
         # 음성 파일 설정
-        if file_type == "🎤 음성 파일":
-            st.subheader("🔊 받아쓰기 방식")
+        if file_type == "🎤 인터뷰 음성 파일!":
+            st.subheader("🔊 어떻게 받아쓸까요?")
             whisper_task = st.radio(
                 "전사 방식 선택",
-                ["원어 전사", "영어 번역"],
-                key="whisper_task"
+                ["원래 언어 그대로요", "영어로 번역해 주세요"],
+                key="whisper_task",
+                label_visibility="collapsed"
             )
-            whisper_task_value = "transcribe" if whisper_task == "원어 전사" else "translate"
+            whisper_task_value = "transcribe" if whisper_task == "원래 언어 그대로요" else "translate"
             
             st.markdown("---")
             
-            st.subheader("📋 추가 작업")
-            audio_do_transcript = st.checkbox("Claude 정리 (한글)", value=False, key="audio_transcript")
-            audio_do_summary = st.checkbox("Claude 요약 (한글)", value=False, key="audio_summary")
+            st.subheader("📋 (한글)노트정리까지 할까요?")
+            audio_do_transcript = st.checkbox("깔끔하게 정리해드릴게요", value=False, key="audio_transcript")
+            audio_do_summary = st.checkbox("요약도 해드릴까요?", value=False, key="audio_summary")
             
             st.markdown("---")
             
             # 파일 크기 제한 안내
-            st.info(f"💡 {MAX_FILE_SIZE_MB}MB 초과 파일은 자동 분할됩니다.")
+            st.info(f"💡 {MAX_FILE_SIZE_MB}MB 넘는 파일은 제가 알아서 나눠서 처리할게요!")
         
         # 텍스트 파일 설정
         else:
-            st.subheader("📋 AI 처리")
-            text_do_transcript = st.checkbox("트랜스크립트 작성", value=True, key="text_transcript")
-            text_do_summary = st.checkbox("요약문 작성", value=False, key="text_summary")
+            st.subheader("📋 뭘 해드릴까요?")
+            text_do_transcript = st.checkbox("인터뷰 풀 트랜스크립트 작성", value=True, key="text_transcript")
+            text_do_summary = st.checkbox("깔끔한 요약문 작성", value=False, key="text_summary")
             
             st.markdown("---")
             
-            st.subheader("📁 출력 포맷")
+            st.subheader("📁 어떤 파일포맷이 편하세요?")
             output_md = st.checkbox("Markdown (.md)", value=True, key="out_md")
             output_docx = st.checkbox("Word (.docx)", value=False, key="out_docx")
             output_pdf = st.checkbox("PDF (.pdf)", value=False, key="out_pdf")
@@ -586,62 +624,62 @@ def main():
         st.markdown("---")
         
         # 이메일 설정
-        st.subheader("📧 결과 전송")
-        send_email_option = st.checkbox("이메일로 결과 전송", value=False, key="send_email")
+        st.subheader("📧 보내드릴까요?")
+        send_email_option = st.checkbox("이메일로 보내드릴게요", value=False, key="send_email")
         user_email = ""
         if send_email_option:
-            user_email = st.text_input("받을 이메일 주소", key="user_email")
+            user_email = st.text_input("📬 받으실 주소 알려주세요!", key="user_email")
             if user_email:
-                st.success(f"✅ {user_email}로 결과를 보내드립니다!")
+                st.success(f"✅ {user_email}로 보내드릴게요!")
         
         st.markdown("---")
         
         # 세션 통계
-        st.header("📊 세션 통계")
+        st.header("📊 오늘 이만큼 했어요!")
         st.metric("처리 완료", f"{st.session_state.usage_count}개")
         
         st.markdown("---")
-        st.caption("v3.1 | Claude Sonnet 4 + OpenAI Whisper")
-        st.caption(f"📦 최대 파일 크기: {MAX_FILE_SIZE_MB}MB (자동 분할)")
+        st.caption("🎀 캐피 인터뷰 | Claude + Whisper")
+        st.caption(f"💡 {MAX_FILE_SIZE_MB}MB 넘으면 알아서 나눠드려요!")
     
     # ============================================
     # 메인 영역
     # ============================================
     
     # 음성 파일 처리
-    if file_type == "🎤 음성 파일":
-        st.header("🎤 음성 파일 업로드")
-        st.markdown("**음성을 텍스트로 변환합니다 (녹취록 생성)**")
+    if file_type == "🎤 인터뷰 음성 파일!":
+        st.header("🎤 인터뷰 음성 파일 올려주세요!")
+        st.markdown("**음성을 텍스트로 받아써드릴게요!**")
         
         audio_files = st.file_uploader(
             "음성 파일 선택 (여러 개 가능)",
             type=['mp3', 'wav', 'm4a', 'ogg', 'webm'],
             accept_multiple_files=True,
-            help=f"지원 포맷: MP3, WAV, M4A, OGG, WEBM | {MAX_FILE_SIZE_MB}MB 초과 시 자동 분할",
+            help=f"지원 포맷: MP3, WAV, M4A, OGG, WEBM | {MAX_FILE_SIZE_MB}MB 넘으면 자동으로 나눠서 처리해요!",
             key="audio_uploader"
         )
         
         if audio_files:
-            st.success(f"✅ {len(audio_files)}개 음성 파일 업로드 완료")
+            st.success(f"✅ {len(audio_files)}개 파일 받았어요!")
             
             total_size = sum([f.size for f in audio_files])
             st.info(f"📊 총 크기: {total_size / 1024 / 1024:.2f} MB")
             
             # 파일 목록 및 분할 예상 표시
-            with st.expander("📁 업로드된 파일 상세"):
+            with st.expander("📁 어떤 파일들이에요?"):
                 for idx, f in enumerate(audio_files, 1):
                     file_size_mb = f.size / (1024 * 1024)
                     if file_size_mb > MAX_FILE_SIZE_MB:
                         estimated_chunks = int(file_size_mb / MAX_FILE_SIZE_MB) + 1
-                        st.markdown(f"**{idx}. {f.name}** ({file_size_mb:.2f} MB) ⚠️ 약 {estimated_chunks}개 청크로 분할 예정")
+                        st.markdown(f"**{idx}. {f.name}** ({file_size_mb:.2f} MB) 💡 약 {estimated_chunks}개로 나눠서 처리할게요!")
                     else:
                         st.markdown(f"**{idx}. {f.name}** ({file_size_mb:.2f} MB) ✅")
             
             st.markdown("---")
             
-            if st.button(f"🚀 {len(audio_files)}개 음성 파일 처리 시작", type="primary", use_container_width=True):
+            if st.button(f"🚀 {len(audio_files)}개 파일 처리 시작할게요!", type="primary", use_container_width=True):
                 st.markdown("---")
-                st.header("📥 처리 진행 중...")
+                st.header("📥 열심히 처리하고 있어요...")
                 
                 audio_results = []
                 total = len(audio_files)
@@ -649,7 +687,7 @@ def main():
                 overall_status = st.empty()
                 
                 for idx, audio_file in enumerate(audio_files, 1):
-                    overall_status.markdown(f"### 🔄 진행 중: {idx}/{total} - {audio_file.name}")
+                    overall_status.markdown(f"### 🔄 {idx}/{total} 처리 중이에요 - {audio_file.name}")
                     overall_progress.progress((idx - 1) / total)
                     
                     st.subheader(f"🎤 파일 {idx}/{total}: {audio_file.name}")
@@ -658,11 +696,11 @@ def main():
                     st.info(f"📦 파일 크기: {file_size_mb:.2f} MB")
                     
                     # Whisper 전사
-                    with st.spinner("Whisper로 전사 중..."):
+                    with st.spinner("🎧 열심히 받아쓰고 있어요..."):
                         transcribed_text = transcribe_audio(audio_file, task=whisper_task_value)
                     
                     if transcribed_text:
-                        st.success("✅ 전사 완료!")
+                        st.success("✅ 받아쓰기 완료!")
                         
                         result = {
                             'filename': audio_file.name,
@@ -673,7 +711,7 @@ def main():
                         
                         # Claude 정리
                         if audio_do_transcript and transcript_prompt:
-                            with st.spinner("Claude로 정리 중..."):
+                            with st.spinner("📝 깔끔하게 정리하고 있어요..."):
                                 result['transcript'] = process_with_claude(
                                     transcribed_text, 
                                     transcript_prompt, 
@@ -683,7 +721,7 @@ def main():
                         # Claude 요약
                         if audio_do_summary and summary_prompt:
                             source_text = result['transcript'] if result['transcript'] else transcribed_text
-                            with st.spinner("Claude로 요약 중..."):
+                            with st.spinner("📋 요약하고 있어요..."):
                                 result['summary'] = process_with_claude(
                                     source_text, 
                                     summary_prompt, 
@@ -695,25 +733,25 @@ def main():
                         # 미리보기
                         with st.expander(f"📄 {audio_file.name} 결과 미리보기"):
                             if result['transcribed']:
-                                st.markdown("**🎤 Whisper 전사 결과:**")
+                                st.markdown("**🎤 받아쓴 내용:**")
                                 st.text_area("전사 텍스트", result['transcribed'][:2000] + "..." if len(result['transcribed']) > 2000 else result['transcribed'], height=150, key=f"trans_{idx}")
                             if result['transcript']:
-                                st.markdown("**📝 Claude 정리:**")
+                                st.markdown("**📝 정리된 내용:**")
                                 st.text_area("정리된 트랜스크립트", result['transcript'][:2000] + "..." if len(result['transcript']) > 2000 else result['transcript'], height=150, key=f"script_{idx}")
                             if result['summary']:
-                                st.markdown("**📋 요약문:**")
+                                st.markdown("**📋 요약:**")
                                 st.text_area("요약", result['summary'][:2000] + "..." if len(result['summary']) > 2000 else result['summary'], height=150, key=f"sum_{idx}")
                     else:
-                        st.error(f"❌ {audio_file.name} 전사 실패")
+                        st.error(f"❌ {audio_file.name} 처리에 실패했어요 ㅠㅠ")
                 
                 overall_progress.progress(1.0)
-                overall_status.markdown("### 🎉 모든 파일 처리 완료!")
+                overall_status.markdown("### 🎉 다 끝났어요!")
                 st.session_state.usage_count += len(audio_results)
                 
                 # 다운로드 버튼
                 if audio_results:
                     st.markdown("---")
-                    st.header("📥 결과 다운로드")
+                    st.header("📥 결과 다운로드하세요!")
                     
                     # ZIP 생성
                     zip_buffer = io.BytesIO()
@@ -731,33 +769,33 @@ def main():
                     zip_buffer.seek(0)
                     
                     st.download_button(
-                        label="📦 전체 결과 ZIP 다운로드",
+                        label="📦 전체 결과 다운로드 (ZIP)",
                         data=zip_buffer,
-                        file_name=f"audio_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                        file_name=f"interview_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
                         mime="application/zip",
                         use_container_width=True
                     )
                     
                     # 이메일 전송
                     if send_email_option and user_email:
-                        with st.spinner("📧 이메일 전송 중..."):
+                        with st.spinner("📧 이메일 보내는 중..."):
                             zip_buffer.seek(0)
-                            attachments = [(f"audio_results_{datetime.now().strftime('%Y%m%d')}.zip", zip_buffer.read())]
+                            attachments = [(f"interview_results_{datetime.now().strftime('%Y%m%d')}.zip", zip_buffer.read())]
                             success, msg = send_email(
                                 user_email,
-                                f"[인터뷰 자동화] 음성 처리 결과 - {datetime.now().strftime('%Y-%m-%d')}",
-                                f"{len(audio_results)}개 파일 처리 완료되었습니다.",
+                                f"[캐피 인터뷰] 결과 보내드려요! - {datetime.now().strftime('%Y-%m-%d')}",
+                                f"{len(audio_results)}개 파일 처리 완료했어요!",
                                 attachments
                             )
                             if success:
-                                st.success(f"✅ {user_email}로 이메일 전송 완료!")
+                                st.success(f"✅ {user_email}로 보내드렸어요!")
                             else:
-                                st.warning(f"⚠️ 이메일 전송 실패: {msg}")
+                                st.warning(f"⚠️ 이메일 전송 실패했어요: {msg}")
     
     # 텍스트 파일 처리
     else:
-        st.header("📄 텍스트 파일 업로드")
-        st.markdown("**텍스트 파일을 한글 트랜스크립트/요약문으로 변환합니다**")
+        st.header("📄 인터뷰 텍스트 올려주세요!")
+        st.markdown("**텍스트 파일을 깔끔하게 정리해드릴게요!**")
         
         text_files = st.file_uploader(
             "텍스트 파일 선택 (여러 개 가능)",
@@ -768,17 +806,17 @@ def main():
         )
         
         if text_files:
-            st.success(f"✅ {len(text_files)}개 텍스트 파일 업로드 완료")
+            st.success(f"✅ {len(text_files)}개 파일 받았어요!")
             
-            with st.expander("📁 업로드된 파일"):
+            with st.expander("📁 어떤 파일들이에요?"):
                 for idx, f in enumerate(text_files, 1):
                     st.markdown(f"**{idx}. {f.name}** ({f.size / 1024:.2f} KB)")
             
             st.markdown("---")
             
-            if st.button(f"🚀 {len(text_files)}개 텍스트 파일 처리 시작", type="primary", use_container_width=True):
+            if st.button(f"🚀 {len(text_files)}개 파일 처리 시작할게요!", type="primary", use_container_width=True):
                 st.markdown("---")
-                st.header("📥 처리 진행 중...")
+                st.header("📥 열심히 처리하고 있어요...")
                 
                 text_results = []
                 total = len(text_files)
@@ -786,7 +824,7 @@ def main():
                 overall_status = st.empty()
                 
                 for idx, text_file in enumerate(text_files, 1):
-                    overall_status.markdown(f"### 🔄 진행 중: {idx}/{total} - {text_file.name}")
+                    overall_status.markdown(f"### 🔄 {idx}/{total} 처리 중이에요 - {text_file.name}")
                     overall_progress.progress((idx - 1) / total)
                     
                     st.subheader(f"📄 파일 {idx}/{total}: {text_file.name}")
@@ -803,7 +841,7 @@ def main():
                         
                         # 트랜스크립트
                         if text_do_transcript and transcript_prompt:
-                            with st.spinner("트랜스크립트 작성 중..."):
+                            with st.spinner("📝 트랜스크립트 작성 중..."):
                                 result['transcript'] = process_with_claude(
                                     content, 
                                     transcript_prompt, 
@@ -813,7 +851,7 @@ def main():
                         # 요약문
                         if text_do_summary and summary_prompt:
                             source = result['transcript'] if result['transcript'] else content
-                            with st.spinner("요약문 작성 중..."):
+                            with st.spinner("📋 요약문 작성 중..."):
                                 result['summary'] = process_with_claude(
                                     source, 
                                     summary_prompt, 
@@ -821,18 +859,18 @@ def main():
                                 )
                         
                         text_results.append(result)
-                        st.success(f"✅ {text_file.name} 처리 완료!")
+                        st.success(f"✅ {text_file.name} 완료!")
                     else:
-                        st.error(f"❌ {text_file.name} 읽기 실패")
+                        st.error(f"❌ {text_file.name} 읽기에 실패했어요 ㅠㅠ")
                 
                 overall_progress.progress(1.0)
-                overall_status.markdown("### 🎉 모든 파일 처리 완료!")
+                overall_status.markdown("### 🎉 다 끝났어요!")
                 st.session_state.usage_count += len(text_results)
                 
                 # 다운로드
                 if text_results:
                     st.markdown("---")
-                    st.header("📥 결과 다운로드")
+                    st.header("📥 결과 다운로드하세요!")
                     
                     # ZIP 생성
                     zip_buffer = io.BytesIO()
@@ -863,28 +901,28 @@ def main():
                     zip_buffer.seek(0)
                     
                     st.download_button(
-                        label="📦 전체 결과 ZIP 다운로드",
+                        label="📦 전체 결과 다운로드 (ZIP)",
                         data=zip_buffer,
-                        file_name=f"text_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                        file_name=f"interview_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
                         mime="application/zip",
                         use_container_width=True
                     )
                     
                     # 이메일 전송
                     if send_email_option and user_email:
-                        with st.spinner("📧 이메일 전송 중..."):
+                        with st.spinner("📧 이메일 보내는 중..."):
                             zip_buffer.seek(0)
-                            attachments = [(f"text_results_{datetime.now().strftime('%Y%m%d')}.zip", zip_buffer.read())]
+                            attachments = [(f"interview_results_{datetime.now().strftime('%Y%m%d')}.zip", zip_buffer.read())]
                             success, msg = send_email(
                                 user_email,
-                                f"[인터뷰 자동화] 텍스트 처리 결과 - {datetime.now().strftime('%Y-%m-%d')}",
-                                f"{len(text_results)}개 파일 처리 완료되었습니다.",
+                                f"[캐피 인터뷰] 결과 보내드려요! - {datetime.now().strftime('%Y-%m-%d')}",
+                                f"{len(text_results)}개 파일 처리 완료했어요!",
                                 attachments
                             )
                             if success:
-                                st.success(f"✅ {user_email}로 이메일 전송 완료!")
+                                st.success(f"✅ {user_email}로 보내드렸어요!")
                             else:
-                                st.warning(f"⚠️ 이메일 전송 실패: {msg}")
+                                st.warning(f"⚠️ 이메일 전송 실패했어요: {msg}")
 
 if __name__ == "__main__":
     main()
