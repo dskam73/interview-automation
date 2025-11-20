@@ -5,3 +5,4 @@ python-docx==1.1.2
 reportlab==4.2.5
 markdown==3.7
 openai==1.54.0
+pydub==0.25.1
