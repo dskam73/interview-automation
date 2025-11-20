@@ -12,9 +12,8 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
-
-# pydub for audio splitting
-from pydub import AudioSegment
+import subprocess
+import json
 
 # 문서 생성용
 from docx import Document
@@ -40,14 +39,85 @@ if 'active_tab' not in st.session_state:
     st.session_state.active_tab = "audio"
 
 # ============================================
-# 파일 분할 기능 (20MB 단위)
+# 파일 분할 기능 (20MB 단위) - ffmpeg 사용
 # ============================================
 MAX_FILE_SIZE_MB = 20
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
-def get_audio_duration_ms(audio_segment):
-    """오디오 길이를 밀리초로 반환"""
-    return len(audio_segment)
+def get_audio_duration(file_path):
+    """ffprobe를 사용하여 오디오 길이(초) 반환"""
+    try:
+        cmd = [
+            'ffprobe', '-v', 'quiet', '-print_format', 'json',
+            '-show_format', file_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        info = json.loads(result.stdout)
+        return float(info['format']['duration'])
+    except Exception as e:
+        st.warning(f"오디오 길이 확인 실패: {e}")
+        return None
+
+def split_audio_with_ffmpeg(input_path, output_dir, chunk_duration_sec=600):
+    """
+    ffmpeg를 사용하여 오디오 파일을 청크로 분할
+    
+    Args:
+        input_path: 입력 파일 경로
+        output_dir: 출력 디렉토리
+        chunk_duration_sec: 청크 길이 (초), 기본 10분
+    
+    Returns:
+        list: 분할된 청크 정보 리스트
+    """
+    try:
+        # 전체 길이 확인
+        total_duration = get_audio_duration(input_path)
+        if total_duration is None:
+            return None
+        
+        chunks = []
+        start_time = 0
+        chunk_index = 1
+        
+        while start_time < total_duration:
+            end_time = min(start_time + chunk_duration_sec, total_duration)
+            output_path = os.path.join(output_dir, f"chunk_{chunk_index:03d}.mp3")
+            
+            # ffmpeg로 청크 추출
+            cmd = [
+                'ffmpeg', '-y', '-i', input_path,
+                '-ss', str(start_time),
+                '-t', str(chunk_duration_sec),
+                '-acodec', 'libmp3lame',
+                '-ab', '128k',
+                '-ar', '44100',
+                '-ac', '1',  # 모노로 변환하여 크기 절약
+                output_path
+            ]
+            
+            subprocess.run(cmd, capture_output=True, check=True)
+            
+            # 청크 정보 저장
+            chunks.append({
+                'index': chunk_index,
+                'path': output_path,
+                'start_time': start_time,
+                'end_time': end_time,
+                'duration': end_time - start_time
+            })
+            
+            start_time = end_time
+            chunk_index += 1
+        
+        return chunks
+        
+    except subprocess.CalledProcessError as e:
+        st.error(f"ffmpeg 오류: {e.stderr.decode() if e.stderr else str(e)}")
+        return None
+    except Exception as e:
+        st.error(f"오디오 분할 오류: {str(e)}")
+        return None
 
 def split_audio_file(audio_file, max_size_mb=20):
     """
@@ -58,83 +128,62 @@ def split_audio_file(audio_file, max_size_mb=20):
         max_size_mb: 최대 파일 크기 (MB)
     
     Returns:
-        list: 분할된 오디오 청크들의 바이트 데이터 리스트
+        list: 분할된 오디오 청크들의 정보 리스트
     """
     try:
-        # 임시 파일로 저장
-        file_extension = audio_file.name.split('.')[-1].lower()
+        file_size_mb = audio_file.size / (1024 * 1024)
         
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{file_extension}') as tmp_file:
-            tmp_file.write(audio_file.read())
-            tmp_path = tmp_file.name
+        # 파일 크기가 제한 이하면 분할 불필요
+        if file_size_mb <= max_size_mb:
+            return None
+        
+        # 임시 디렉토리 생성
+        temp_dir = tempfile.mkdtemp()
+        file_extension = audio_file.name.split('.')[-1].lower()
+        input_path = os.path.join(temp_dir, f"input.{file_extension}")
+        
+        # 파일 저장
+        with open(input_path, 'wb') as f:
+            f.write(audio_file.read())
         
         # 파일 포인터 리셋
         audio_file.seek(0)
         
-        # pydub으로 오디오 로드
-        if file_extension == 'mp3':
-            audio = AudioSegment.from_mp3(tmp_path)
-        elif file_extension == 'wav':
-            audio = AudioSegment.from_wav(tmp_path)
-        elif file_extension == 'm4a':
-            audio = AudioSegment.from_file(tmp_path, format='m4a')
-        elif file_extension == 'ogg':
-            audio = AudioSegment.from_ogg(tmp_path)
-        elif file_extension == 'webm':
-            audio = AudioSegment.from_file(tmp_path, format='webm')
-        else:
-            audio = AudioSegment.from_file(tmp_path)
+        # 전체 길이 확인
+        total_duration = get_audio_duration(input_path)
+        if total_duration is None:
+            return None
         
-        # 임시 파일 삭제
-        os.unlink(tmp_path)
+        # 청크 길이 계산 (파일 크기 기반)
+        # 예: 80MB 파일 → 4개 청크 필요 → 각 청크는 전체 길이/4
+        num_chunks = int(file_size_mb / max_size_mb) + 1
+        chunk_duration_sec = total_duration / num_chunks
         
-        # 파일 크기 확인
-        file_size = audio_file.size
+        # 최소 60초, 최대 1200초 (20분) 제한
+        chunk_duration_sec = max(60, min(chunk_duration_sec, 1200))
         
-        if file_size <= max_size_mb * 1024 * 1024:
-            # 분할 필요 없음
-            return None, audio
+        st.info(f"📊 총 길이: {total_duration/60:.1f}분 → {num_chunks}개 청크로 분할 (청크당 약 {chunk_duration_sec/60:.1f}분)")
         
-        # 분할 필요 - 청크 계산
-        total_duration_ms = len(audio)
+        # 분할 실행
+        chunks = split_audio_with_ffmpeg(input_path, temp_dir, chunk_duration_sec)
         
-        # 파일 크기 기반으로 청크당 시간 계산
-        # (전체 시간) / (파일크기 / 목표크기) = 청크당 시간
-        num_chunks = int(file_size / (max_size_mb * 1024 * 1024)) + 1
-        chunk_duration_ms = total_duration_ms // num_chunks
-        
-        # 최소 1분, 최대 20분으로 제한
-        chunk_duration_ms = max(60000, min(chunk_duration_ms, 1200000))
-        
-        chunks = []
-        start = 0
-        chunk_index = 1
-        
-        while start < total_duration_ms:
-            end = min(start + chunk_duration_ms, total_duration_ms)
-            chunk = audio[start:end]
+        if chunks:
+            # 각 청크의 바이트 데이터 로드
+            for chunk in chunks:
+                with open(chunk['path'], 'rb') as f:
+                    chunk['data'] = io.BytesIO(f.read())
+                # 임시 파일 삭제
+                os.unlink(chunk['path'])
             
-            # 청크를 mp3 바이트로 변환
-            chunk_buffer = io.BytesIO()
-            chunk.export(chunk_buffer, format='mp3', bitrate='128k')
-            chunk_buffer.seek(0)
-            
-            chunks.append({
-                'index': chunk_index,
-                'data': chunk_buffer,
-                'start_time': start / 1000,  # 초 단위
-                'end_time': end / 1000,
-                'duration': (end - start) / 1000
-            })
-            
-            start = end
-            chunk_index += 1
+            # 입력 파일 삭제
+            os.unlink(input_path)
+            os.rmdir(temp_dir)
         
-        return chunks, audio
+        return chunks
         
     except Exception as e:
         st.error(f"오디오 파일 분할 중 오류: {str(e)}")
-        return None, None
+        return None
 
 def format_time(seconds):
     """초를 MM:SS 형식으로 변환"""
@@ -193,7 +242,7 @@ def transcribe_audio(audio_file, task="transcribe"):
             
             # 파일 분할
             with st.spinner("🔪 오디오 파일 분할 중..."):
-                chunks, audio = split_audio_file(audio_file, MAX_FILE_SIZE_MB)
+                chunks = split_audio_file(audio_file, MAX_FILE_SIZE_MB)
             
             if chunks is None:
                 st.error("파일 분할에 실패했습니다.")
@@ -252,6 +301,9 @@ def transcribe_audio(audio_file, task="transcribe"):
             with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_file:
                 tmp_file.write(audio_file.read())
                 tmp_path = tmp_file.name
+            
+            # 파일 포인터 리셋
+            audio_file.seek(0)
             
             with open(tmp_path, 'rb') as audio:
                 if task == "translate":
