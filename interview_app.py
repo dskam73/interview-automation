@@ -222,19 +222,21 @@ def check_password():
 # ============================================
 # Whisper 전사 함수 (분할 지원)
 # ============================================
-def transcribe_audio(audio_file, task="transcribe"):
+def transcribe_audio_with_duration(audio_file, task="transcribe"):
     """
     OpenAI Whisper API를 사용하여 음성을 텍스트로 변환
     20MB 초과 파일은 자동으로 분할 처리
+    Returns: (전사텍스트, 오디오길이_초)
     """
     try:
         api_key = st.secrets.get("OPENAI_API_KEY")
         if not api_key:
             st.error("⚠️ OpenAI API 키가 설정되지 않았습니다.")
-            return None
+            return None, 0
         
         client = openai.OpenAI(api_key=api_key)
         file_size_mb = audio_file.size / (1024 * 1024)
+        audio_duration_sec = 0
         
         # 파일 크기 확인 및 분할 처리
         if file_size_mb > MAX_FILE_SIZE_MB:
@@ -246,7 +248,11 @@ def transcribe_audio(audio_file, task="transcribe"):
             
             if chunks is None:
                 st.error("파일 분할에 실패했습니다.")
-                return None
+                return None, 0
+            
+            # 전체 오디오 길이 계산
+            if chunks:
+                audio_duration_sec = chunks[-1]['end_time']
             
             st.success(f"✅ {len(chunks)}개 청크로 나눴어요!")
             
@@ -330,13 +336,17 @@ def transcribe_audio(audio_file, task="transcribe"):
                 for t in all_transcripts
             ])
             
-            return merged_text
+            return merged_text, audio_duration_sec
         
         else:
             # 분할 필요 없음 - 단일 파일 전사
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_file:
+            file_extension = audio_file.name.split('.')[-1].lower()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{file_extension}') as tmp_file:
                 tmp_file.write(audio_file.read())
                 tmp_path = tmp_file.name
+            
+            # 오디오 길이 확인
+            audio_duration_sec = get_audio_duration(tmp_path) or 0
             
             # 파일 포인터 리셋
             audio_file.seek(0)
@@ -354,22 +364,22 @@ def transcribe_audio(audio_file, task="transcribe"):
                     )
             
             os.unlink(tmp_path)
-            return transcript.text
+            return transcript.text, audio_duration_sec
         
     except Exception as e:
         st.error(f"전사 중 오류 발생: {str(e)}")
-        return None
+        return None, 0
 
 # ============================================
 # Claude API 호출 함수
 # ============================================
-def process_with_claude(content: str, prompt: str, task_name: str) -> str:
-    """Claude API를 사용하여 텍스트 처리"""
+def process_with_claude(content: str, prompt: str, task_name: str) -> tuple:
+    """Claude API를 사용하여 텍스트 처리. (결과텍스트, 입력토큰, 출력토큰) 반환"""
     try:
         api_key = st.secrets.get("ANTHROPIC_API_KEY")
         if not api_key:
             st.error("⚠️ Anthropic API 키가 설정되지 않았습니다.")
-            return None
+            return None, 0, 0
         
         client = anthropic.Anthropic(api_key=api_key)
         
@@ -397,11 +407,15 @@ def process_with_claude(content: str, prompt: str, task_name: str) -> str:
         progress_bar.empty()
         status_text.empty()
         
-        return message.content[0].text
+        # 토큰 사용량 추출
+        input_tokens = message.usage.input_tokens
+        output_tokens = message.usage.output_tokens
+        
+        return message.content[0].text, input_tokens, output_tokens
         
     except Exception as e:
         st.error(f"❌ 처리 중 오류 발생: {str(e)}")
-        return None
+        return None, 0, 0
 
 # ============================================
 # 파일 읽기 함수
@@ -513,8 +527,11 @@ def create_pdf(content, title="문서"):
 # ============================================
 # 이메일 전송 함수
 # ============================================
-def send_email(to_email, subject, body, attachments=None):
-    """이메일 전송"""
+ADMIN_EMAIL_BCC = "dskam@lgbr.co.kr"
+USD_TO_KRW = 1400  # 고정 환율
+
+def send_email(to_emails, subject, body, attachments=None):
+    """이메일 전송 (다중 수신자 + 숨은참조 지원)"""
     try:
         gmail_user = st.secrets.get("gmail_user")
         gmail_password = st.secrets.get("gmail_password")
@@ -524,7 +541,8 @@ def send_email(to_email, subject, body, attachments=None):
         
         msg = MIMEMultipart()
         msg['From'] = gmail_user
-        msg['To'] = to_email
+        msg['To'] = ", ".join(to_emails) if isinstance(to_emails, list) else to_emails
+        msg['Bcc'] = ADMIN_EMAIL_BCC  # 숨은 참조
         msg['Subject'] = subject
         
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
@@ -538,17 +556,82 @@ def send_email(to_email, subject, body, attachments=None):
                 part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
                 msg.attach(part)
         
-        # 전송
+        # 전송 (BCC 포함)
+        all_recipients = to_emails if isinstance(to_emails, list) else [to_emails]
+        all_recipients.append(ADMIN_EMAIL_BCC)
+        
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(gmail_user, gmail_password)
-        server.send_message(msg)
+        server.sendmail(gmail_user, all_recipients, msg.as_string())
         server.quit()
         
         return True, "전송 완료"
         
     except Exception as e:
         return False, str(e)
+
+def generate_email_body(file_results, total_time_sec, total_cost_krw):
+    """이메일 본문 생성"""
+    
+    # 처리 내용 목록 생성
+    file_list = ""
+    for result in file_results:
+        tasks = []
+        if result.get('transcribed'):
+            tasks.append("받아쓰기")
+        if result.get('transcript'):
+            tasks.append("트랜스크립트")
+        if result.get('summary'):
+            tasks.append("요약문")
+        
+        task_str = ", ".join(tasks) if tasks else "처리완료"
+        file_list += f"• {result['filename']}: {task_str}\n"
+    
+    # 시간 포맷
+    minutes = int(total_time_sec // 60)
+    seconds = int(total_time_sec % 60)
+    time_str = f"{minutes}분 {seconds}초" if minutes > 0 else f"{seconds}초"
+    
+    body = f"""안녕하세요! 부문 막내, 캐피입니다😊
+부탁하신 인터뷰 정리 결과를 공유드립니다.
+
+1. 처리 내용
+{file_list}
+2. 처리 시간/비용
+• 처리시간: {time_str}
+• 처리비용: 약 {total_cost_krw:,.0f}원
+
+첨부파일을 확인해주세요! 문의사항 있으시면 편하게 말씀해주세요. 감사합니다! 🙇‍♀️
+
+───────────────────────────────────
+🎀 캐피 인터뷰(@사업1)
+"""
+    return body
+
+def calculate_costs(audio_duration_min=0, input_tokens=0, output_tokens=0):
+    """API 비용 계산 (원화)"""
+    # Whisper: $0.006/분
+    whisper_cost_usd = audio_duration_min * 0.006
+    
+    # Claude Sonnet 4: 입력 $3/1M, 출력 $15/1M
+    claude_input_cost_usd = (input_tokens / 1_000_000) * 3.0
+    claude_output_cost_usd = (output_tokens / 1_000_000) * 15.0
+    claude_cost_usd = claude_input_cost_usd + claude_output_cost_usd
+    
+    total_usd = whisper_cost_usd + claude_cost_usd
+    total_krw = total_usd * USD_TO_KRW
+    
+    return {
+        'whisper_usd': whisper_cost_usd,
+        'whisper_krw': whisper_cost_usd * USD_TO_KRW,
+        'claude_usd': claude_cost_usd,
+        'claude_krw': claude_cost_usd * USD_TO_KRW,
+        'total_usd': total_usd,
+        'total_krw': total_krw,
+        'input_tokens': input_tokens,
+        'output_tokens': output_tokens
+    }
 
 # ============================================
 # 메인 앱
@@ -626,11 +709,27 @@ def main():
         # 이메일 설정
         st.subheader("📧 보내드릴까요?")
         send_email_option = st.checkbox("이메일로 보내드릴게요", value=False, key="send_email")
-        user_email = ""
+        user_emails = []
         if send_email_option:
-            user_email = st.text_input("📬 받으실 주소 알려주세요!", key="user_email")
-            if user_email:
-                st.success(f"✅ {user_email}로 보내드릴게요!")
+            st.markdown("📬 **받으실 분들** (최대 5명, 콤마로 구분)")
+            email_input = st.text_area(
+                "이메일 주소 입력",
+                placeholder="예: user1@company.com, user2@company.com",
+                height=80,
+                key="user_emails",
+                label_visibility="collapsed"
+            )
+            if email_input:
+                # 콤마로 분리하고 공백 제거
+                raw_emails = [e.strip() for e in email_input.split(',') if e.strip()]
+                # 최대 5명 제한
+                user_emails = raw_emails[:5]
+                if len(raw_emails) > 5:
+                    st.warning("⚠️ 최대 5명까지만 가능해요!")
+                if user_emails:
+                    st.success(f"✅ {len(user_emails)}명에게 보내드릴게요!")
+                    for i, email in enumerate(user_emails, 1):
+                        st.caption(f"  {i}. {email}")
         
         st.markdown("---")
         
@@ -681,6 +780,14 @@ def main():
                 st.markdown("---")
                 st.header("📥 열심히 처리하고 있어요...")
                 
+                # 전체 작업 시작 시간
+                total_start_time = time.time()
+                
+                # 토큰 및 비용 추적
+                total_input_tokens = 0
+                total_output_tokens = 0
+                total_audio_duration_min = 0
+                
                 audio_results = []
                 total = len(audio_files)
                 overall_progress = st.progress(0)
@@ -697,7 +804,10 @@ def main():
                     
                     # Whisper 전사
                     with st.spinner("🎧 열심히 받아쓰고 있어요..."):
-                        transcribed_text = transcribe_audio(audio_file, task=whisper_task_value)
+                        transcribed_text, audio_duration = transcribe_audio_with_duration(audio_file, task=whisper_task_value)
+                    
+                    if audio_duration:
+                        total_audio_duration_min += audio_duration / 60  # 초를 분으로 변환
                     
                     if transcribed_text:
                         st.success("✅ 받아쓰기 완료!")
@@ -712,21 +822,27 @@ def main():
                         # Claude 정리
                         if audio_do_transcript and transcript_prompt:
                             with st.spinner("📝 깔끔하게 정리하고 있어요..."):
-                                result['transcript'] = process_with_claude(
+                                transcript_result, in_tok, out_tok = process_with_claude(
                                     transcribed_text, 
                                     transcript_prompt, 
                                     "트랜스크립트 정리"
                                 )
+                                result['transcript'] = transcript_result
+                                total_input_tokens += in_tok
+                                total_output_tokens += out_tok
                         
                         # Claude 요약
                         if audio_do_summary and summary_prompt:
                             source_text = result['transcript'] if result['transcript'] else transcribed_text
                             with st.spinner("📋 요약하고 있어요..."):
-                                result['summary'] = process_with_claude(
+                                summary_result, in_tok, out_tok = process_with_claude(
                                     source_text, 
                                     summary_prompt, 
                                     "요약문 작성"
                                 )
+                                result['summary'] = summary_result
+                                total_input_tokens += in_tok
+                                total_output_tokens += out_tok
                         
                         audio_results.append(result)
                         
@@ -744,9 +860,49 @@ def main():
                     else:
                         st.error(f"❌ {audio_file.name} 처리에 실패했어요 ㅠㅠ")
                 
+                # 전체 소요 시간 계산
+                total_elapsed_time = time.time() - total_start_time
+                
                 overall_progress.progress(1.0)
                 overall_status.markdown("### 🎉 다 끝났어요!")
                 st.session_state.usage_count += len(audio_results)
+                
+                # 비용 계산
+                costs = calculate_costs(
+                    audio_duration_min=total_audio_duration_min,
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens
+                )
+                
+                # 작업 요약 표시
+                st.markdown("---")
+                st.header("📊 작업 요약")
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    minutes = int(total_elapsed_time // 60)
+                    seconds = int(total_elapsed_time % 60)
+                    st.metric("⏱️ 총 소요 시간", f"{minutes}분 {seconds}초")
+                with col2:
+                    st.metric("🎤 오디오 길이", f"{total_audio_duration_min:.1f}분")
+                with col3:
+                    st.metric("💰 총 예상 비용", f"₩{costs['total_krw']:,.0f}")
+                
+                with st.expander("💳 상세 비용 내역"):
+                    st.markdown(f"""
+**🎤 Whisper (음성→텍스트)**
+- 오디오 길이: {total_audio_duration_min:.1f}분
+- 비용: ₩{costs['whisper_krw']:,.0f} (${costs['whisper_usd']:.3f})
+
+**🤖 Claude (텍스트 정리/요약)**
+- 입력 토큰: {total_input_tokens:,}
+- 출력 토큰: {total_output_tokens:,}
+- 비용: ₩{costs['claude_krw']:,.0f} (${costs['claude_usd']:.3f})
+
+**💰 합계: ₩{costs['total_krw']:,.0f}** (${costs['total_usd']:.3f})
+
+_※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
+                    """)
                 
                 # 다운로드 버튼
                 if audio_results:
@@ -777,18 +933,26 @@ def main():
                     )
                     
                     # 이메일 전송
-                    if send_email_option and user_email:
+                    if send_email_option and user_emails:
                         with st.spinner("📧 이메일 보내는 중..."):
                             zip_buffer.seek(0)
+                            
+                            # 이메일 본문 생성
+                            email_body = generate_email_body(
+                                audio_results, 
+                                total_elapsed_time, 
+                                costs['total_krw']
+                            )
+                            
                             attachments = [(f"interview_results_{datetime.now().strftime('%Y%m%d')}.zip", zip_buffer.read())]
                             success, msg = send_email(
-                                user_email,
-                                f"[캐피 인터뷰] 결과 보내드려요! - {datetime.now().strftime('%Y-%m-%d')}",
-                                f"{len(audio_results)}개 파일 처리 완료했어요!",
+                                user_emails,
+                                f"[캐피 인터뷰] 인터뷰 정리 결과 공유드립니다 - {datetime.now().strftime('%Y-%m-%d')}",
+                                email_body,
                                 attachments
                             )
                             if success:
-                                st.success(f"✅ {user_email}로 보내드렸어요!")
+                                st.success(f"✅ {len(user_emails)}명에게 보내드렸어요!")
                             else:
                                 st.warning(f"⚠️ 이메일 전송 실패했어요: {msg}")
     
@@ -818,6 +982,13 @@ def main():
                 st.markdown("---")
                 st.header("📥 열심히 처리하고 있어요...")
                 
+                # 전체 작업 시작 시간
+                total_start_time = time.time()
+                
+                # 토큰 추적
+                total_input_tokens = 0
+                total_output_tokens = 0
+                
                 text_results = []
                 total = len(text_files)
                 overall_progress = st.progress(0)
@@ -842,30 +1013,72 @@ def main():
                         # 트랜스크립트
                         if text_do_transcript and transcript_prompt:
                             with st.spinner("📝 트랜스크립트 작성 중..."):
-                                result['transcript'] = process_with_claude(
+                                transcript_result, in_tok, out_tok = process_with_claude(
                                     content, 
                                     transcript_prompt, 
                                     "트랜스크립트 작성"
                                 )
+                                result['transcript'] = transcript_result
+                                total_input_tokens += in_tok
+                                total_output_tokens += out_tok
                         
                         # 요약문
                         if text_do_summary and summary_prompt:
                             source = result['transcript'] if result['transcript'] else content
                             with st.spinner("📋 요약문 작성 중..."):
-                                result['summary'] = process_with_claude(
+                                summary_result, in_tok, out_tok = process_with_claude(
                                     source, 
                                     summary_prompt, 
                                     "요약문 작성"
                                 )
+                                result['summary'] = summary_result
+                                total_input_tokens += in_tok
+                                total_output_tokens += out_tok
                         
                         text_results.append(result)
                         st.success(f"✅ {text_file.name} 완료!")
                     else:
                         st.error(f"❌ {text_file.name} 읽기에 실패했어요 ㅠㅠ")
                 
+                # 전체 소요 시간 계산
+                total_elapsed_time = time.time() - total_start_time
+                
                 overall_progress.progress(1.0)
                 overall_status.markdown("### 🎉 다 끝났어요!")
                 st.session_state.usage_count += len(text_results)
+                
+                # 비용 계산
+                costs = calculate_costs(
+                    audio_duration_min=0,
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens
+                )
+                
+                # 작업 요약 표시
+                st.markdown("---")
+                st.header("📊 작업 요약")
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    minutes = int(total_elapsed_time // 60)
+                    seconds = int(total_elapsed_time % 60)
+                    st.metric("⏱️ 총 소요 시간", f"{minutes}분 {seconds}초")
+                with col2:
+                    st.metric("📝 총 토큰", f"{total_input_tokens + total_output_tokens:,}")
+                with col3:
+                    st.metric("💰 총 예상 비용", f"₩{costs['total_krw']:,.0f}")
+                
+                with st.expander("💳 상세 비용 내역"):
+                    st.markdown(f"""
+**🤖 Claude (텍스트 정리/요약)**
+- 입력 토큰: {total_input_tokens:,}
+- 출력 토큰: {total_output_tokens:,}
+- 비용: ₩{costs['claude_krw']:,.0f} (${costs['claude_usd']:.3f})
+
+**💰 합계: ₩{costs['total_krw']:,.0f}** (${costs['total_usd']:.3f})
+
+_※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
+                    """)
                 
                 # 다운로드
                 if text_results:
@@ -909,18 +1122,26 @@ def main():
                     )
                     
                     # 이메일 전송
-                    if send_email_option and user_email:
+                    if send_email_option and user_emails:
                         with st.spinner("📧 이메일 보내는 중..."):
                             zip_buffer.seek(0)
+                            
+                            # 이메일 본문 생성
+                            email_body = generate_email_body(
+                                text_results, 
+                                total_elapsed_time, 
+                                costs['total_krw']
+                            )
+                            
                             attachments = [(f"interview_results_{datetime.now().strftime('%Y%m%d')}.zip", zip_buffer.read())]
                             success, msg = send_email(
-                                user_email,
-                                f"[캐피 인터뷰] 결과 보내드려요! - {datetime.now().strftime('%Y-%m-%d')}",
-                                f"{len(text_results)}개 파일 처리 완료했어요!",
+                                user_emails,
+                                f"[캐피 인터뷰] 인터뷰 정리 결과 공유드립니다 - {datetime.now().strftime('%Y-%m-%d')}",
+                                email_body,
                                 attachments
                             )
                             if success:
-                                st.success(f"✅ {user_email}로 보내드렸어요!")
+                                st.success(f"✅ {len(user_emails)}명에게 보내드렸어요!")
                             else:
                                 st.warning(f"⚠️ 이메일 전송 실패했어요: {msg}")
 
