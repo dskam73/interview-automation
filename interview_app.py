@@ -941,9 +941,9 @@ def main():
     # 기존 작업물 다운로드 (진행 중이 아닐 때만)
     if not st.session_state.get('processing', False):
         st.markdown("---")
+        st.markdown("### 📥 최근 작업물 (24시간)")
         history = get_download_history()
         if history:
-            st.markdown("### 📥 최근 작업물")
             for item in history[:5]:
                 data = get_download_file(item['file_id'])
                 if data:
@@ -952,6 +952,8 @@ def main():
                         st.caption(f"{item['display_name']} ({item['created_display']}, {item['remaining']} 남음)")
                     with col2:
                         st.download_button("📦", data, item['original_filename'], "application/zip", key=item['file_id'])
+        else:
+            st.caption("아직 작업물이 없어요. 파일을 올려주시면 열심히 정리해드릴게요! 😊")
 
 if __name__ == "__main__":
     main()
