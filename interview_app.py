@@ -42,7 +42,7 @@ def get_kst_now():
     return datetime.now(KST)
 
 # ============================================
-# CSS 스타일 - 사이드바 완전 숨김 + 모바일 최적화 추가
+# CSS 스타일 - 사이드바 완전 숨김 + 미니멀 디자인
 # ============================================
 st.markdown("""
 <style>
@@ -70,58 +70,6 @@ st.markdown("""
 .stFileUploader > div {
     padding: 0.5rem;
 }
-
-/* 모바일 반응형 CSS */
-@media (max-width: 768px) {
-    .stApp {
-        padding: 0.5rem;
-    }
-    
-    .stButton > button {
-        width: 100%;
-        padding: 0.75rem;
-        font-size: 1rem;
-    }
-    
-    .stTextArea textarea {
-        font-size: 16px !important; /* iOS 확대 방지 */
-    }
-    
-    .stTextInput input {
-        font-size: 16px !important;
-    }
-    
-    h1 {
-        font-size: 1.5rem !important;
-    }
-    
-    h2 {
-        font-size: 1.25rem !important;
-    }
-    
-    h3 {
-        font-size: 1.1rem !important;
-    }
-    
-    /* 파일 업로더 터치 영역 확대 */
-    .stFileUploader {
-        padding: 1rem;
-    }
-    
-    .stFileUploader label {
-        font-size: 0.9rem;
-    }
-    
-    /* 체크박스 터치 영역 확대 */
-    .stCheckbox {
-        padding: 0.5rem 0;
-    }
-    
-    /* 진행 바 */
-    .stProgress > div {
-        height: 8px;
-    }
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -139,51 +87,6 @@ EXPIRY_HOURS = 24
 DOCX_FONT_NAME = 'LG스마트체 Regular'
 ADMIN_EMAIL_BCC = "dskam@lgbr.co.kr"
 USD_TO_KRW = 1400
-
-# ============================================
-# 프롬프트 로드 함수
-# ============================================
-def load_prompts():
-    """프로젝트 파일에서 프롬프트 로드"""
-    transcript_prompt = None
-    summary_prompt = None
-    
-    try:
-        # Full 트랜스크립트 프롬프트 읽기
-        transcript_file = '/mnt/project/_Full_트랜스크립트_작성_프롬프트_v2_0.txt'
-        if os.path.exists(transcript_file):
-            with open(transcript_file, 'r', encoding='utf-8') as f:
-                content = f.read()
-                # TRANSCRIPT_PROMPT_KO = """ 부분 찾아서 추출
-                if 'TRANSCRIPT_PROMPT_KO = """' in content:
-                    start = content.find('TRANSCRIPT_PROMPT_KO = """') + len('TRANSCRIPT_PROMPT_KO = """')
-                    end = content.find('"""', start)
-                    transcript_prompt = content[start:end].strip()
-        
-        # 인터뷰 요약문 프롬프트 읽기
-        summary_file = '/mnt/project/_인터뷰_요약문_작성_프롬프트_v4_0.txt'
-        if os.path.exists(summary_file):
-            with open(summary_file, 'r', encoding='utf-8') as f:
-                summary_prompt = f.read().strip()
-                # 첫 줄이 제목인 경우 제거
-                if summary_prompt.startswith('# '):
-                    lines = summary_prompt.split('\n')
-                    summary_prompt = '\n'.join(lines[1:]).strip()
-    
-    except Exception as e:
-        st.warning(f"프로젝트 파일 읽기 실패: {e}")
-    
-    # 프로젝트 파일에서 못 읽으면 secrets에서 시도
-    if not transcript_prompt or not summary_prompt:
-        try:
-            if not transcript_prompt:
-                transcript_prompt = st.secrets.get("transcript_prompt", "")
-            if not summary_prompt:
-                summary_prompt = st.secrets.get("summary_prompt", "")
-        except:
-            pass
-    
-    return transcript_prompt, summary_prompt
 
 # ============================================
 # 사용량 관리
@@ -621,27 +524,27 @@ def calculate_costs(audio_min=0, in_tok=0, out_tok=0, stt_model="whisper-1"):
     return {'total_krw': total_krw, 'stt_usd': stt_cost, 'claude_usd': claude}
 
 def generate_email_body(results, files, file_type, do_transcript, do_summary, out_md, out_docx, out_txt, minutes, seconds, costs):
-    """트리 구조의 이메일 본문 생성"""
+    """상세한 이메일 본문 생성"""
     is_audio = file_type == 'audio'
+    file_type_label = "음성" if is_audio else "텍스트"
     
     # 입력 파일 목록
     input_list = []
     for idx, f in enumerate(files, 1):
-        input_list.append(f"{idx}. {f.name}")
+        input_list.append(f"{idx}. {f.name} ({file_type_label})")
     input_section = "\n".join(input_list)
     
-    # 출력 파일 목록 (트리 구조)
+    # 출력 파일 목록
     output_list = []
     for idx, r in enumerate(results, 1):
         base = r['base_name']
-        lines = [f"{idx}. {r['filename']}"]
-        tree_items = []
+        lines = [f"{idx}. {r['filename']} ({file_type_label})"]
         
         # 녹취 원본 (음성인 경우)
         if r.get('whisper'):
-            tree_items.append(f"녹취(원본): {base}_whisper.txt")
+            lines.append(f"   - 녹취(원본): {base}_whisper.txt")
         
-        # 트랜스크립트
+        # 트랜스크립트/노트정리
         if r.get('transcript'):
             formats = []
             if out_docx:
@@ -651,7 +554,8 @@ def generate_email_body(results, files, file_type, do_transcript, do_summary, ou
             if out_txt:
                 formats.append(f"{base}.txt")
             if formats:
-                tree_items.append(f"트랜스크립트: {', '.join(formats)}")
+                label = "녹취(번역/정리)" if is_audio else "트랜스크립트"
+                lines.append(f"   - {label}: {', '.join(formats)}")
         
         # 요약
         if r.get('summary'):
@@ -663,43 +567,38 @@ def generate_email_body(results, files, file_type, do_transcript, do_summary, ou
             if out_txt:
                 formats.append(f"#{base}.txt")
             if formats:
-                tree_items.append(f"요약: {', '.join(formats)}")
-        
-        # 트리 구조로 표시
-        for i, item in enumerate(tree_items):
-            if i < len(tree_items) - 1:
-                lines.append(f"   ├─ {item}")
-            else:
-                lines.append(f"   └─ {item}")
+                lines.append(f"   - 요약: {', '.join(formats)}")
         
         output_list.append("\n".join(lines))
     
-    output_section = "\n\n".join(output_list)
+    output_section = "\n".join(output_list)
     
-    # 현재 날짜/시간 (KST)
-    now = get_kst_now()
-    date_str = now.strftime("%Y. %m/%d (%H:%M)")
+    # 작업 내용 설명
+    tasks = []
+    if is_audio:
+        tasks.append("받아쓰기")
+    if do_transcript:
+        tasks.append("번역" if is_audio else "정리")
+    if do_summary:
+        tasks.append("요약")
+    task_desc = ", ".join(tasks) if tasks else "정리"
     
     body = f"""안녕하세요! 캐피입니다 😊
 인터뷰 정리 결과를 보내드립니다.
 
-✔️ 다음 파일들을 제게 주셨어요 ({len(files)}개)
-─────────────────────────────
+📄 다음 파일들을 제게 주셨어요 ({len(files)}개)
+─────────────────────────────────────────────────
 {input_section}
 
-✔️ 주신 파일별로 정리, 요약를 했습니다
-─────────────────────────────
+✅ 주신 파일별로 {task_desc}를 했습니다
+─────────────────────────────────────────────────
 {output_section}
 
 ※ 첨부파일을 확인해주세요!
 
-열심히 하고 있는데 그래도 이 만큼 걸리네요.
-( 소요 시간/비용: {minutes}분 {seconds}초 / 약 {costs['total_krw']:,.0f}원 )
-
-오늘도 좋은 하루 되세요 😃
-캐피가 드립니다.
-
-{date_str}
+💰 열심히 하고 있는데 그래도 이 만큼 걸리네요 ⏱️
+─────────────────────────────────────────────────
+• 소요 시간/비용: {minutes}분 {seconds}초 / 약 {costs['total_krw']:,.0f}원
 """
     return body
 
@@ -740,12 +639,12 @@ def main():
         st.markdown("인터뷰를 정리하는 캐피입니다. 음원/텍스트를 올려주세요! 📎")
     
     # 프롬프트 로드
-    transcript_prompt, summary_prompt = load_prompts()
-    
-    # 프롬프트가 없으면 경고
-    if not transcript_prompt and not summary_prompt:
-        st.error("⚠️ 프롬프트가 설정되지 않았습니다. 관리자에게 문의하세요.")
-        return
+    try:
+        transcript_prompt = st.secrets.get("transcript_prompt", "")
+        summary_prompt = st.secrets.get("summary_prompt", "")
+    except:
+        transcript_prompt = ""
+        summary_prompt = ""
     
     st.markdown("---")
     
@@ -850,8 +749,6 @@ def main():
                         st.session_state.proc_out_txt = out_txt
                         st.session_state.proc_emails = emails
                         st.session_state.proc_stt_model = stt_model
-                        st.session_state.proc_transcript_prompt = transcript_prompt
-                        st.session_state.proc_summary_prompt = summary_prompt
                         st.rerun()
     
     # ========== 진행 UI ==========
@@ -866,8 +763,6 @@ def main():
         out_txt = st.session_state.proc_out_txt
         emails = st.session_state.proc_emails
         stt_model = st.session_state.get('proc_stt_model', 'whisper-1')
-        transcript_prompt = st.session_state.get('proc_transcript_prompt')
-        summary_prompt = st.session_state.get('proc_summary_prompt')
         
         # 진행 단계 정의
         if is_audio:
@@ -1032,10 +927,7 @@ def main():
             body = generate_email_body(results, files, file_type, do_transcript, do_summary, 
                                        out_md, out_docx, out_txt, minutes, seconds, costs)
             
-            # 이메일 제목 생성 - 첫 번째 파일명 사용
-            email_subject = f"인터뷰 정리가 도착했어요 - {results[0]['filename'].rsplit('.', 1)[0] if results else 'interview'}"
-            
-            email_success, _ = send_email(emails, email_subject, body, [(zip_filename, zip_data)])
+            email_success, _ = send_email(emails, f"[캐피 인터뷰] 인터뷰 정리 결과 - {get_kst_now().strftime('%Y-%m-%d')}", body, [(zip_filename, zip_data)])
             
             # 완료 표시
             with progress_placeholder.container():
