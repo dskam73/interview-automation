@@ -3,7 +3,7 @@ import anthropic
 import openai
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import zipfile
 import io
 import os
@@ -31,6 +31,131 @@ st.set_page_config(
     page_icon="🎀",
     layout="wide"
 )
+
+# ============================================
+# 다운로드 파일 저장 시스템 (24시간 유지)
+# ============================================
+DOWNLOAD_DIR = "/tmp/cappy_downloads"
+METADATA_FILE = "/tmp/cappy_downloads/metadata.json"
+EXPIRY_HOURS = 24
+
+def init_download_system():
+    """다운로드 시스템 초기화"""
+    if not os.path.exists(DOWNLOAD_DIR):
+        os.makedirs(DOWNLOAD_DIR)
+    if not os.path.exists(METADATA_FILE):
+        with open(METADATA_FILE, 'w') as f:
+            json.dump([], f)
+
+def cleanup_expired_files():
+    """만료된 파일 정리"""
+    try:
+        if not os.path.exists(METADATA_FILE):
+            return
+        
+        with open(METADATA_FILE, 'r') as f:
+            metadata = json.load(f)
+        
+        current_time = datetime.now()
+        valid_items = []
+        
+        for item in metadata:
+            expiry_time = datetime.fromisoformat(item['expiry_time'])
+            if current_time < expiry_time:
+                valid_items.append(item)
+            else:
+                # 만료된 파일 삭제
+                file_path = os.path.join(DOWNLOAD_DIR, item['file_id'])
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+        
+        # 메타데이터 업데이트
+        with open(METADATA_FILE, 'w') as f:
+            json.dump(valid_items, f)
+            
+    except Exception as e:
+        pass  # 오류 무시
+
+def save_download_file(zip_data, display_name, original_filename):
+    """다운로드 파일 저장 및 메타데이터 기록"""
+    try:
+        init_download_system()
+        cleanup_expired_files()
+        
+        # 고유 파일 ID 생성
+        file_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{original_filename}"
+        file_path = os.path.join(DOWNLOAD_DIR, file_id)
+        
+        # 파일 저장
+        with open(file_path, 'wb') as f:
+            f.write(zip_data)
+        
+        # 메타데이터 읽기
+        with open(METADATA_FILE, 'r') as f:
+            metadata = json.load(f)
+        
+        # 새 항목 추가
+        new_item = {
+            'file_id': file_id,
+            'display_name': display_name,
+            'original_filename': original_filename,
+            'created_time': datetime.now().isoformat(),
+            'expiry_time': (datetime.now() + timedelta(hours=EXPIRY_HOURS)).isoformat(),
+            'created_display': datetime.now().strftime('%m/%d %H:%M')
+        }
+        metadata.insert(0, new_item)
+        
+        # 메타데이터 저장
+        with open(METADATA_FILE, 'w') as f:
+            json.dump(metadata, f)
+        
+        return True
+        
+    except Exception as e:
+        st.warning(f"파일 저장 중 오류: {str(e)}")
+        return False
+
+def get_download_history():
+    """다운로드 이력 조회 (유효한 것만)"""
+    try:
+        init_download_system()
+        cleanup_expired_files()
+        
+        if not os.path.exists(METADATA_FILE):
+            return []
+        
+        with open(METADATA_FILE, 'r') as f:
+            metadata = json.load(f)
+        
+        # 만료 시간 남은 것만 반환
+        current_time = datetime.now()
+        valid_items = []
+        
+        for item in metadata:
+            expiry_time = datetime.fromisoformat(item['expiry_time'])
+            if current_time < expiry_time:
+                # 남은 시간 계산
+                remaining = expiry_time - current_time
+                hours_left = int(remaining.total_seconds() // 3600)
+                minutes_left = int((remaining.total_seconds() % 3600) // 60)
+                item['remaining'] = f"{hours_left}시간 {minutes_left}분"
+                valid_items.append(item)
+        
+        return valid_items
+        
+    except Exception as e:
+        return []
+
+def get_download_file(file_id):
+    """저장된 파일 데이터 반환"""
+    try:
+        file_path = os.path.join(DOWNLOAD_DIR, file_id)
+        if os.path.exists(file_path):
+            with open(file_path, 'rb') as f:
+                return f.read()
+        return None
+    except:
+        return None
 
 # 세션 상태 초기화
 if 'usage_count' not in st.session_state:
@@ -709,33 +834,57 @@ def main():
         # 이메일 설정
         st.subheader("📧 보내드릴까요?")
         send_email_option = st.checkbox("이메일로 보내드릴게요", value=False, key="send_email")
-        user_emails = []
         if send_email_option:
             st.markdown("📬 **받으실 분들** (최대 5명, 콤마로 구분)")
             email_input = st.text_area(
                 "이메일 주소 입력",
                 placeholder="예: user1@company.com, user2@company.com",
                 height=80,
-                key="user_emails",
+                key="user_emails_input",
                 label_visibility="collapsed"
             )
             if email_input:
                 # 콤마로 분리하고 공백 제거
                 raw_emails = [e.strip() for e in email_input.split(',') if e.strip()]
                 # 최대 5명 제한
-                user_emails = raw_emails[:5]
+                st.session_state.user_emails_list = raw_emails[:5]
                 if len(raw_emails) > 5:
                     st.warning("⚠️ 최대 5명까지만 가능해요!")
-                if user_emails:
-                    st.success(f"✅ {len(user_emails)}명에게 보내드릴게요!")
-                    for i, email in enumerate(user_emails, 1):
+                if st.session_state.user_emails_list:
+                    st.success(f"✅ {len(st.session_state.user_emails_list)}명에게 보내드릴게요!")
+                    for i, email in enumerate(st.session_state.user_emails_list, 1):
                         st.caption(f"  {i}. {email}")
+            else:
+                st.session_state.user_emails_list = []
+        else:
+            st.session_state.user_emails_list = []
         
         st.markdown("---")
         
-        # 세션 통계
+        # 세션 통계 및 다운로드 이력
         st.header("📊 오늘 이만큼 했어요!")
         st.metric("처리 완료", f"{st.session_state.usage_count}개")
+        
+        # 다운로드 이력 표시 (24시간 유지)
+        download_history = get_download_history()
+        if download_history:
+            st.markdown("---")
+            st.subheader("📥 다시 받기")
+            st.caption("⏰ 24시간 동안 유지돼요")
+            
+            for idx, item in enumerate(download_history):
+                file_data = get_download_file(item['file_id'])
+                if file_data:
+                    with st.container():
+                        st.caption(f"🕐 {item['created_display']} (남은시간: {item['remaining']})")
+                        st.download_button(
+                            label=f"📦 {item['display_name']}",
+                            data=file_data,
+                            file_name=item['original_filename'],
+                            mime="application/zip",
+                            key=f"history_download_{idx}_{item['file_id']}",
+                            use_container_width=True
+                        )
         
         st.markdown("---")
         st.caption("🎀 캐피 인터뷰 | Claude + Whisper")
@@ -923,20 +1072,28 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                                 zf.writestr(f"{base_name}_summary.md", result['summary'])
                     
                     zip_buffer.seek(0)
+                    zip_data = zip_buffer.getvalue()
+                    zip_filename = f"interview_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+                    
+                    # 24시간 다운로드 이력에 저장
+                    file_names = [r['filename'] for r in audio_results]
+                    display_name = f"{file_names[0]}" if len(file_names) == 1 else f"{file_names[0]} 외 {len(file_names)-1}개"
+                    save_download_file(zip_data, display_name, zip_filename)
                     
                     st.download_button(
                         label="📦 전체 결과 다운로드 (ZIP)",
-                        data=zip_buffer,
-                        file_name=f"interview_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                        data=zip_data,
+                        file_name=zip_filename,
                         mime="application/zip",
                         use_container_width=True
                     )
                     
+                    st.info("💡 이 파일은 24시간 동안 사이드바에서 다시 받을 수 있어요!")
+                    
                     # 이메일 전송
+                    user_emails = st.session_state.get('user_emails_list', [])
                     if send_email_option and user_emails:
                         with st.spinner("📧 이메일 보내는 중..."):
-                            zip_buffer.seek(0)
-                            
                             # 이메일 본문 생성
                             email_body = generate_email_body(
                                 audio_results, 
@@ -944,7 +1101,7 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                                 costs['total_krw']
                             )
                             
-                            attachments = [(f"interview_results_{datetime.now().strftime('%Y%m%d')}.zip", zip_buffer.read())]
+                            attachments = [(zip_filename, zip_data)]
                             success, msg = send_email(
                                 user_emails,
                                 f"[캐피 인터뷰] 인터뷰 정리 결과 공유드립니다 - {datetime.now().strftime('%Y-%m-%d')}",
@@ -1112,20 +1269,28 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                                     zf.writestr(f"{base_name}_summary.pdf", pdf_buffer.read())
                     
                     zip_buffer.seek(0)
+                    zip_data = zip_buffer.getvalue()
+                    zip_filename = f"interview_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+                    
+                    # 24시간 다운로드 이력에 저장
+                    file_names = [r['filename'] for r in text_results]
+                    display_name = f"{file_names[0]}" if len(file_names) == 1 else f"{file_names[0]} 외 {len(file_names)-1}개"
+                    save_download_file(zip_data, display_name, zip_filename)
                     
                     st.download_button(
                         label="📦 전체 결과 다운로드 (ZIP)",
-                        data=zip_buffer,
-                        file_name=f"interview_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                        data=zip_data,
+                        file_name=zip_filename,
                         mime="application/zip",
                         use_container_width=True
                     )
                     
+                    st.info("💡 이 파일은 24시간 동안 사이드바에서 다시 받을 수 있어요!")
+                    
                     # 이메일 전송
+                    user_emails = st.session_state.get('user_emails_list', [])
                     if send_email_option and user_emails:
                         with st.spinner("📧 이메일 보내는 중..."):
-                            zip_buffer.seek(0)
-                            
                             # 이메일 본문 생성
                             email_body = generate_email_body(
                                 text_results, 
@@ -1133,7 +1298,7 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                                 costs['total_krw']
                             )
                             
-                            attachments = [(f"interview_results_{datetime.now().strftime('%Y%m%d')}.zip", zip_buffer.read())]
+                            attachments = [(zip_filename, zip_data)]
                             success, msg = send_email(
                                 user_emails,
                                 f"[캐피 인터뷰] 인터뷰 정리 결과 공유드립니다 - {datetime.now().strftime('%Y-%m-%d')}",
