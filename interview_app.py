@@ -175,6 +175,82 @@ def setup_korean_font():
         return False
 
 # ============================================
+# 사용량 제한 설정
+# ============================================
+MAX_FILES_PER_UPLOAD = 5  # 한 번에 최대 업로드 가능 파일 수
+DAILY_LIMIT_AUDIO = 30    # 하루 최대 음성 파일 처리 수 (앱 전체 기준)
+DAILY_LIMIT_TEXT = 30     # 하루 최대 텍스트 파일 처리 수 (앱 전체 기준)
+USAGE_FILE = "/tmp/cappy_usage.json"
+
+def init_usage_system():
+    """사용량 추적 시스템 초기화"""
+    try:
+        if not os.path.exists(USAGE_FILE):
+            reset_daily_usage()
+    except Exception:
+        pass
+
+def get_daily_usage():
+    """오늘의 사용량 조회"""
+    try:
+        init_usage_system()
+        
+        if not os.path.exists(USAGE_FILE):
+            return {'audio': 0, 'text': 0, 'date': get_kst_now().strftime('%Y-%m-%d')}
+        
+        with open(USAGE_FILE, 'r') as f:
+            usage = json.load(f)
+        
+        # 날짜가 바뀌었으면 리셋
+        today = get_kst_now().strftime('%Y-%m-%d')
+        if usage.get('date') != today:
+            reset_daily_usage()
+            return {'audio': 0, 'text': 0, 'date': today}
+        
+        return usage
+        
+    except Exception:
+        return {'audio': 0, 'text': 0, 'date': get_kst_now().strftime('%Y-%m-%d')}
+
+def reset_daily_usage():
+    """일일 사용량 리셋"""
+    try:
+        today = get_kst_now().strftime('%Y-%m-%d')
+        usage = {'audio': 0, 'text': 0, 'date': today}
+        with open(USAGE_FILE, 'w') as f:
+            json.dump(usage, f)
+        return usage
+    except Exception:
+        return {'audio': 0, 'text': 0, 'date': get_kst_now().strftime('%Y-%m-%d')}
+
+def update_usage(file_type, count):
+    """사용량 업데이트 (file_type: 'audio' 또는 'text')"""
+    try:
+        usage = get_daily_usage()
+        usage[file_type] = usage.get(file_type, 0) + count
+        with open(USAGE_FILE, 'w') as f:
+            json.dump(usage, f)
+        return usage
+    except Exception:
+        return None
+
+def check_usage_limit(file_type, requested_count):
+    """사용량 한도 체크 - 처리 가능 여부와 남은 한도 반환"""
+    usage = get_daily_usage()
+    current = usage.get(file_type, 0)
+    limit = DAILY_LIMIT_AUDIO if file_type == 'audio' else DAILY_LIMIT_TEXT
+    remaining = limit - current
+    
+    return {
+        'can_process': remaining > 0,
+        'current': current,
+        'limit': limit,
+        'remaining': remaining,
+        'requested': requested_count,
+        'allowed': min(requested_count, remaining)
+    }
+
+# ============================================
 # 다운로드 파일 저장 시스템 (24시간 유지)
 # ============================================
 DOWNLOAD_DIR = "/tmp/cappy_downloads"
@@ -735,7 +811,9 @@ def normalize_markdown_format(text):
 # ============================================
 # 파일 변환 함수들
 # ============================================
-def set_docx_font(run, font_name='나눔고딕', font_size=11):
+DOCX_FONT_NAME = 'LG스마트체 Regular'
+
+def set_docx_font(run, font_name=DOCX_FONT_NAME, font_size=11):
     """DOCX Run에 폰트 설정"""
     run.font.name = font_name
     run.font.size = Pt(font_size)
@@ -746,20 +824,20 @@ def set_docx_font(run, font_name='나눔고딕', font_size=11):
     rFonts.set(qn('w:eastAsia'), font_name)
 
 def create_docx(content, title="문서"):
-    """마크다운 텍스트를 DOCX로 변환 (나눔고딕 폰트 적용)"""
+    """마크다운 텍스트를 DOCX로 변환 (LG스마트체 폰트 적용)"""
     doc = Document()
     
     # 기본 스타일 설정
     style = doc.styles['Normal']
-    style.font.name = '나눔고딕'
+    style.font.name = DOCX_FONT_NAME
     style.font.size = Pt(11)
-    style._element.rPr.rFonts.set(qn('w:eastAsia'), '나눔고딕')
+    style._element.rPr.rFonts.set(qn('w:eastAsia'), DOCX_FONT_NAME)
     
     # 제목 스타일 설정
     title_para = doc.add_heading(title, 0)
     title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
     for run in title_para.runs:
-        set_docx_font(run, '나눔고딕', 18)
+        set_docx_font(run, DOCX_FONT_NAME, 18)
     
     lines = content.split('\n')
     for line in lines:
@@ -768,33 +846,33 @@ def create_docx(content, title="문서"):
         if stripped.startswith('# '):
             heading = doc.add_heading(stripped[2:], level=1)
             for run in heading.runs:
-                set_docx_font(run, '나눔고딕', 16)
+                set_docx_font(run, DOCX_FONT_NAME, 16)
         elif stripped.startswith('## '):
             heading = doc.add_heading(stripped[3:], level=2)
             for run in heading.runs:
-                set_docx_font(run, '나눔고딕', 14)
+                set_docx_font(run, DOCX_FONT_NAME, 14)
         elif stripped.startswith('### '):
             heading = doc.add_heading(stripped[4:], level=3)
             for run in heading.runs:
-                set_docx_font(run, '나눔고딕', 12)
+                set_docx_font(run, DOCX_FONT_NAME, 12)
         elif stripped.startswith('#### '):
             heading = doc.add_heading(stripped[5:], level=4)
             for run in heading.runs:
-                set_docx_font(run, '나눔고딕', 11)
+                set_docx_font(run, DOCX_FONT_NAME, 11)
         elif stripped.startswith('- ') or stripped.startswith('* '):
             p = doc.add_paragraph(stripped[2:], style='List Bullet')
             for run in p.runs:
-                set_docx_font(run, '나눔고딕', 11)
+                set_docx_font(run, DOCX_FONT_NAME, 11)
         elif stripped.startswith('---'):
             # 구분선
             p = doc.add_paragraph('─' * 50)
             for run in p.runs:
-                set_docx_font(run, '나눔고딕', 11)
+                set_docx_font(run, DOCX_FONT_NAME, 11)
         elif stripped.startswith('**') and stripped.endswith('**'):
             p = doc.add_paragraph()
             run = p.add_run(stripped.strip('*'))
             run.bold = True
-            set_docx_font(run, '나눔고딕', 11)
+            set_docx_font(run, DOCX_FONT_NAME, 11)
         elif stripped:
             # 인라인 볼드 처리
             p = doc.add_paragraph()
@@ -803,10 +881,10 @@ def create_docx(content, title="문서"):
                 if part.startswith('**') and part.endswith('**'):
                     run = p.add_run(part[2:-2])
                     run.bold = True
-                    set_docx_font(run, '나눔고딕', 11)
+                    set_docx_font(run, DOCX_FONT_NAME, 11)
                 else:
                     run = p.add_run(part)
-                    set_docx_font(run, '나눔고딕', 11)
+                    set_docx_font(run, DOCX_FONT_NAME, 11)
     
     buffer = io.BytesIO()
     doc.save(buffer)
@@ -943,8 +1021,6 @@ def main():
         return
     
     st.title("🎀 캐피 인터뷰")
-    st.markdown("안녕하세요! 인터뷰 음성/텍스트 파일 올려주시면 제가 깔끔하게 정리해드릴게요! 😊")
-    st.markdown("---")
     
     try:
         transcript_prompt = st.secrets.get("transcript_prompt", "")
@@ -956,11 +1032,10 @@ def main():
     sidebar_usage_placeholder = None
     
     with st.sidebar:
-        st.header("⚙️ 캐피 인터뷰예요!")
+        st.header("⚙️ 설정")
         
-        st.subheader("📁 어떤 파일이에요?")
         file_type = st.radio(
-            "파일 유형 선택",
+            "파일 유형",
             ["🎤 인터뷰 음성 파일!", "📄 인터뷰 텍스트!"],
             key="file_type_radio",
             label_visibility="collapsed"
@@ -1041,9 +1116,24 @@ def main():
         
         st.markdown("---")
         
-        st.header("📊 오늘 이만큼 했어요!")
+        st.header("📊 오늘 사용량")
+        
+        # 일일 사용량 표시
+        daily_usage = get_daily_usage()
+        col_audio, col_text = st.columns(2)
+        with col_audio:
+            audio_remaining = DAILY_LIMIT_AUDIO - daily_usage.get('audio', 0)
+            st.metric("🎤 음성", f"{daily_usage.get('audio', 0)}/{DAILY_LIMIT_AUDIO}", 
+                     delta=f"남음: {audio_remaining}", delta_color="normal")
+        with col_text:
+            text_remaining = DAILY_LIMIT_TEXT - daily_usage.get('text', 0)
+            st.metric("📄 텍스트", f"{daily_usage.get('text', 0)}/{DAILY_LIMIT_TEXT}",
+                     delta=f"남음: {text_remaining}", delta_color="normal")
+        
+        st.caption(f"📅 기준일: {daily_usage.get('date', '-')}")
+        
         sidebar_usage_placeholder = st.empty()
-        sidebar_usage_placeholder.metric("처리 완료", f"{st.session_state.usage_count}개")
+        sidebar_usage_placeholder.metric("이번 세션 처리", f"{st.session_state.usage_count}개")
         
         download_history = get_download_history()
         if download_history:
@@ -1069,29 +1159,44 @@ def main():
         st.caption("🎀 캐피 인터뷰 | Claude + Whisper")
     
     if file_type == "🎤 인터뷰 음성 파일!":
-        st.header("🎤 인터뷰 음성 파일 올려주세요!")
-        st.markdown("**음성을 텍스트로 받아써드릴게요!**")
+        st.subheader("🎤 음성 파일 업로드")
         
-        audio_files = st.file_uploader(
-            "음성 파일 선택 (여러 개 가능)",
-            type=['mp3', 'wav', 'm4a', 'ogg', 'webm'],
-            accept_multiple_files=True,
-            help=f"지원 포맷: MP3, WAV, M4A, OGG, WEBM",
-            key="audio_uploader"
-        )
+        # 사용량 체크
+        audio_usage = check_usage_limit('audio', MAX_FILES_PER_UPLOAD)
         
-        if audio_files:
-            st.success(f"✅ {len(audio_files)}개 파일")
+        if not audio_usage['can_process']:
+            st.error(f"⚠️ 오늘 처리 한도({DAILY_LIMIT_AUDIO}개)에 도달했어요. 내일 이용해주세요!")
+        else:
+            audio_files = st.file_uploader(
+                f"파일 선택 (최대 {MAX_FILES_PER_UPLOAD}개, 남은 한도: {audio_usage['remaining']}개)",
+                type=['mp3', 'wav', 'm4a', 'ogg', 'webm'],
+                accept_multiple_files=True,
+                key="audio_uploader"
+            )
             
-            total_size = sum([f.size for f in audio_files])
-            st.info(f"📊 총 크기: {total_size / 1024 / 1024:.2f} MB")
-            
-            with st.expander("📁 파일 목록"):
-                for idx, f in enumerate(audio_files, 1):
-                    file_size_mb = f.size / (1024 * 1024)
-                    st.caption(f"{idx}. {f.name} ({file_size_mb:.1f} MB)")
-            
-            st.markdown("---")
+            if audio_files:
+                # 업로드 개수 제한 체크
+                if len(audio_files) > MAX_FILES_PER_UPLOAD:
+                    st.warning(f"⚠️ 최대 {MAX_FILES_PER_UPLOAD}개만 처리됩니다.")
+                    audio_files = audio_files[:MAX_FILES_PER_UPLOAD]
+                
+                # 일일 한도 체크
+                usage_check = check_usage_limit('audio', len(audio_files))
+                if len(audio_files) > usage_check['remaining']:
+                    st.warning(f"⚠️ 오늘은 {usage_check['remaining']}개만 처리됩니다.")
+                    audio_files = audio_files[:usage_check['remaining']]
+                
+                if len(audio_files) > 0:
+                    total_size = sum([f.size for f in audio_files])
+                    st.caption(f"✅ {len(audio_files)}개 파일 · {total_size / 1024 / 1024:.1f} MB")
+                    
+                    # 파일 목록은 2개 이상일 때만 표시
+                    if len(audio_files) > 1:
+                        with st.expander("📁 파일 목록"):
+                            for idx, f in enumerate(audio_files, 1):
+                                st.caption(f"{idx}. {f.name} ({f.size / 1024 / 1024:.1f} MB)")
+                    
+                    st.markdown("---")
             
             if st.button(f"🚀 처리 시작!", type="primary", use_container_width=True):
                 st.markdown("---")
@@ -1178,9 +1283,14 @@ def main():
                 overall_progress.progress(1.0)
                 overall_status.caption("✅ 완료!")
                 
+                # 세션 사용량 업데이트
                 st.session_state.usage_count += len(audio_results)
                 if sidebar_usage_placeholder:
-                    sidebar_usage_placeholder.metric("처리 완료", f"{st.session_state.usage_count}개")
+                    sidebar_usage_placeholder.metric("이번 세션 처리", f"{st.session_state.usage_count}개")
+                
+                # 일일 사용량 업데이트
+                if len(audio_results) > 0:
+                    update_usage('audio', len(audio_results))
                 
                 costs = calculate_costs(
                     audio_duration_min=total_audio_duration_min,
@@ -1217,31 +1327,29 @@ def main():
                             if result['transcribed']:
                                 zf.writestr(f"{base_name}_whisper.txt", result['transcribed'])
                             
-                            # 트랜스크립트 (md, docx, txt)
+                            # 트랜스크립트 - 원본 파일명 그대로 사용
                             if result['transcript']:
                                 if audio_output_md:
-                                    zf.writestr(f"{base_name}_transcript.md", result['transcript'])
+                                    zf.writestr(f"{base_name}.md", result['transcript'])
                                 if audio_output_docx:
-                                    docx_buffer = create_docx(result['transcript'], f"{base_name} Transcript")
-                                    zf.writestr(f"{base_name}_transcript.docx", docx_buffer.read())
+                                    docx_buffer = create_docx(result['transcript'], base_name)
+                                    zf.writestr(f"{base_name}.docx", docx_buffer.read())
                                 if audio_output_txt:
-                                    # 마크다운 문법 제거한 plain text
                                     plain_text = re.sub(r'[#*_\-]+', '', result['transcript'])
                                     plain_text = re.sub(r'\n{3,}', '\n\n', plain_text)
-                                    zf.writestr(f"{base_name}_transcript.txt", plain_text)
+                                    zf.writestr(f"{base_name}.txt", plain_text)
                             
-                            # 요약문 (md, docx, txt)
+                            # 요약문 - 파일명 앞에 # 붙임
                             if result['summary']:
                                 if audio_output_md:
-                                    zf.writestr(f"{base_name}_summary.md", result['summary'])
+                                    zf.writestr(f"#{base_name}.md", result['summary'])
                                 if audio_output_docx:
-                                    docx_buffer = create_docx(result['summary'], f"{base_name} Summary")
-                                    zf.writestr(f"{base_name}_summary.docx", docx_buffer.read())
+                                    docx_buffer = create_docx(result['summary'], f"#{base_name}")
+                                    zf.writestr(f"#{base_name}.docx", docx_buffer.read())
                                 if audio_output_txt:
-                                    # 마크다운 문법 제거한 plain text
                                     plain_text = re.sub(r'[#*_\-]+', '', result['summary'])
                                     plain_text = re.sub(r'\n{3,}', '\n\n', plain_text)
-                                    zf.writestr(f"{base_name}_summary.txt", plain_text)
+                                    zf.writestr(f"#{base_name}.txt", plain_text)
                     
                     zip_buffer.seek(0)
                     zip_data = zip_buffer.getvalue()
@@ -1282,28 +1390,47 @@ def main():
                                 st.warning(f"⚠️ 이메일 실패: {msg}")
     
     else:
-        st.header("📄 인터뷰 텍스트 올려주세요!")
-        st.markdown("**텍스트 파일을 깔끔하게 정리해드릴게요!**")
+        st.subheader("📄 텍스트 파일 업로드")
         
-        text_files = st.file_uploader(
-            "텍스트 파일 선택 (여러 개 가능)",
-            type=['txt', 'md'],
-            accept_multiple_files=True,
-            help="지원 포맷: TXT, MD",
-            key="text_uploader"
-        )
+        # 사용량 체크
+        text_usage = check_usage_limit('text', MAX_FILES_PER_UPLOAD)
         
-        if text_files:
-            st.success(f"✅ {len(text_files)}개 파일")
+        if not text_usage['can_process']:
+            st.error(f"⚠️ 오늘 처리 한도({DAILY_LIMIT_TEXT}개)에 도달했어요. 내일 이용해주세요!")
+        else:
+            text_files = st.file_uploader(
+                f"파일 선택 (최대 {MAX_FILES_PER_UPLOAD}개, 남은 한도: {text_usage['remaining']}개)",
+                type=['txt', 'md'],
+                accept_multiple_files=True,
+                key="text_uploader"
+            )
             
-            with st.expander("📁 파일 목록"):
-                for idx, f in enumerate(text_files, 1):
-                    st.caption(f"{idx}. {f.name} ({f.size / 1024:.1f} KB)")
-            
-            st.markdown("---")
-            
-            if st.button(f"🚀 처리 시작!", type="primary", use_container_width=True):
-                st.markdown("---")
+            if text_files:
+                # 업로드 개수 제한 체크
+                if len(text_files) > MAX_FILES_PER_UPLOAD:
+                    st.warning(f"⚠️ 최대 {MAX_FILES_PER_UPLOAD}개만 처리됩니다.")
+                    text_files = text_files[:MAX_FILES_PER_UPLOAD]
+                
+                # 일일 한도 체크
+                usage_check = check_usage_limit('text', len(text_files))
+                if len(text_files) > usage_check['remaining']:
+                    st.warning(f"⚠️ 오늘은 {usage_check['remaining']}개만 처리됩니다.")
+                    text_files = text_files[:usage_check['remaining']]
+                
+                if len(text_files) > 0:
+                    total_size = sum([f.size for f in text_files])
+                    st.caption(f"✅ {len(text_files)}개 파일 · {total_size / 1024:.1f} KB")
+                    
+                    # 파일 목록은 2개 이상일 때만 표시
+                    if len(text_files) > 1:
+                        with st.expander("📁 파일 목록"):
+                            for idx, f in enumerate(text_files, 1):
+                                st.caption(f"{idx}. {f.name} ({f.size / 1024:.1f} KB)")
+                    
+                    st.markdown("---")
+                    
+                    if st.button(f"🚀 처리 시작!", type="primary", use_container_width=True, key="text_process_btn"):
+                        st.markdown("---")
                 
                 job_start_time = get_kst_now()
                 total_start_time = time.time()
@@ -1380,9 +1507,14 @@ def main():
                 overall_progress.progress(1.0)
                 overall_status.caption("✅ 완료!")
                 
+                # 세션 사용량 업데이트
                 st.session_state.usage_count += len(text_results)
                 if sidebar_usage_placeholder:
-                    sidebar_usage_placeholder.metric("처리 완료", f"{st.session_state.usage_count}개")
+                    sidebar_usage_placeholder.metric("이번 세션 처리", f"{st.session_state.usage_count}개")
+                
+                # 일일 사용량 업데이트
+                if len(text_results) > 0:
+                    update_usage('text', len(text_results))
                 
                 costs = calculate_costs(
                     audio_duration_min=0,
@@ -1415,31 +1547,29 @@ def main():
                         for result in text_results:
                             base_name = result['filename'].rsplit('.', 1)[0]
                             
-                            # 트랜스크립트 (md, docx, txt)
+                            # 트랜스크립트 - 원본 파일명 그대로 사용
                             if result['transcript']:
                                 if output_md:
-                                    zf.writestr(f"{base_name}_transcript.md", result['transcript'])
+                                    zf.writestr(f"{base_name}.md", result['transcript'])
                                 if output_docx:
-                                    docx_buffer = create_docx(result['transcript'], f"{base_name} Transcript")
-                                    zf.writestr(f"{base_name}_transcript.docx", docx_buffer.read())
+                                    docx_buffer = create_docx(result['transcript'], base_name)
+                                    zf.writestr(f"{base_name}.docx", docx_buffer.read())
                                 if output_txt:
-                                    # 마크다운 문법 제거한 plain text
                                     plain_text = re.sub(r'[#*_\-]+', '', result['transcript'])
                                     plain_text = re.sub(r'\n{3,}', '\n\n', plain_text)
-                                    zf.writestr(f"{base_name}_transcript.txt", plain_text)
+                                    zf.writestr(f"{base_name}.txt", plain_text)
                             
-                            # 요약문 (md, docx, txt)
+                            # 요약문 - 파일명 앞에 # 붙임
                             if result['summary']:
                                 if output_md:
-                                    zf.writestr(f"{base_name}_summary.md", result['summary'])
+                                    zf.writestr(f"#{base_name}.md", result['summary'])
                                 if output_docx:
-                                    docx_buffer = create_docx(result['summary'], f"{base_name} Summary")
-                                    zf.writestr(f"{base_name}_summary.docx", docx_buffer.read())
+                                    docx_buffer = create_docx(result['summary'], f"#{base_name}")
+                                    zf.writestr(f"#{base_name}.docx", docx_buffer.read())
                                 if output_txt:
-                                    # 마크다운 문법 제거한 plain text
                                     plain_text = re.sub(r'[#*_\-]+', '', result['summary'])
                                     plain_text = re.sub(r'\n{3,}', '\n\n', plain_text)
-                                    zf.writestr(f"{base_name}_summary.txt", plain_text)
+                                    zf.writestr(f"#{base_name}.txt", plain_text)
                     
                     zip_buffer.seek(0)
                     zip_data = zip_buffer.getvalue()
