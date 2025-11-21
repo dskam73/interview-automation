@@ -144,44 +144,21 @@ USD_TO_KRW = 1400
 # 프롬프트 로드 함수
 # ============================================
 def load_prompts():
-    """프로젝트 파일에서 프롬프트 로드"""
+    """secrets에서 프롬프트 로드"""
     transcript_prompt = None
     summary_prompt = None
     
     try:
-        # Full 트랜스크립트 프롬프트 읽기
-        transcript_file = '/mnt/project/_Full_트랜스크립트_작성_프롬프트_v2_0.txt'
-        if os.path.exists(transcript_file):
-            with open(transcript_file, 'r', encoding='utf-8') as f:
-                content = f.read()
-                # TRANSCRIPT_PROMPT_KO = """ 부분 찾아서 추출
-                if 'TRANSCRIPT_PROMPT_KO = """' in content:
-                    start = content.find('TRANSCRIPT_PROMPT_KO = """') + len('TRANSCRIPT_PROMPT_KO = """')
-                    end = content.find('"""', start)
-                    transcript_prompt = content[start:end].strip()
+        transcript_prompt = st.secrets.get("transcript_prompt", "")
+        summary_prompt = st.secrets.get("summary_prompt", "")
         
-        # 인터뷰 요약문 프롬프트 읽기
-        summary_file = '/mnt/project/_인터뷰_요약문_작성_프롬프트_v4_0.txt'
-        if os.path.exists(summary_file):
-            with open(summary_file, 'r', encoding='utf-8') as f:
-                summary_prompt = f.read().strip()
-                # 첫 줄이 제목인 경우 제거
-                if summary_prompt.startswith('# '):
-                    lines = summary_prompt.split('\n')
-                    summary_prompt = '\n'.join(lines[1:]).strip()
-    
+        if not transcript_prompt:
+            st.error("⚠️ transcript_prompt가 secrets에 없습니다")
+        if not summary_prompt:
+            st.error("⚠️ summary_prompt가 secrets에 없습니다")
+            
     except Exception as e:
-        st.warning(f"프로젝트 파일 읽기 실패: {e}")
-    
-    # 프로젝트 파일에서 못 읽으면 secrets에서 시도
-    if not transcript_prompt or not summary_prompt:
-        try:
-            if not transcript_prompt:
-                transcript_prompt = st.secrets.get("transcript_prompt", "")
-            if not summary_prompt:
-                summary_prompt = st.secrets.get("summary_prompt", "")
-        except:
-            pass
+        st.error(f"Secrets 읽기 오류: {str(e)}")
     
     return transcript_prompt, summary_prompt
 
@@ -424,18 +401,33 @@ def transcribe_audio(audio_file, task="transcribe", model="whisper-1"):
 # ============================================
 def process_with_claude(content, prompt, task_name):
     try:
+        if not prompt:
+            st.error(f"프롬프트가 없습니다 - {task_name}")
+            return None, 0, 0
+            
+        if not content:
+            st.error(f"처리할 콘텐츠가 없습니다 - {task_name}")
+            return None, 0, 0
+        
         api_key = st.secrets.get("ANTHROPIC_API_KEY")
         if not api_key:
+            st.error("ANTHROPIC_API_KEY가 없습니다")
             return None, 0, 0
+            
         client = anthropic.Anthropic(api_key=api_key)
+        
+        # Claude Sonnet 4.5 모델 사용
         message = client.messages.create(
-            model="claude-sonnet-4-5-20250514",
+            model="claude-sonnet-4-5-20250514",  # Sonnet 4.5 모델
             max_tokens=16000,
             temperature=0,
             messages=[{"role": "user", "content": f"{prompt}\n\n# 처리할 인터뷰 내용:\n\n{content}"}]
         )
+        
         return message.content[0].text, message.usage.input_tokens, message.usage.output_tokens
-    except:
+        
+    except Exception as e:
+        st.error(f"Claude 오류 - {task_name}: {str(e)}")
         return None, 0, 0
 
 # ============================================
