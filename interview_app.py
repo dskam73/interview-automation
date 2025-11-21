@@ -3,7 +3,7 @@ import anthropic
 import openai
 import tempfile
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import zipfile
 import io
 import os
@@ -21,10 +21,8 @@ import urllib.request
 from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 import markdown
 
 # 페이지 설정
@@ -33,6 +31,15 @@ st.set_page_config(
     page_icon="🎀",
     layout="wide"
 )
+
+# ============================================
+# 한국 표준시 (KST) 설정
+# ============================================
+KST = timezone(timedelta(hours=9))
+
+def get_kst_now():
+    """한국 표준시 현재 시간 반환"""
+    return datetime.now(KST)
 
 # ============================================
 # 모바일 최적화 CSS
@@ -132,7 +139,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================
-# 한글 폰트 설정 (PDF용) - 나눔고딕
+# 한글 폰트 설정 (DOCX용) - 나눔고딕
 # ============================================
 FONT_DIR = "/tmp/fonts"
 KOREAN_FONT_PATH = os.path.join(FONT_DIR, "NanumGothic.ttf")
@@ -159,11 +166,6 @@ def setup_korean_font():
             font_path = os.path.join(FONT_DIR, font_name)
             if not os.path.exists(font_path):
                 urllib.request.urlretrieve(url, font_path)
-        
-        if os.path.exists(KOREAN_FONT_PATH):
-            pdfmetrics.registerFont(TTFont('NanumGothic', KOREAN_FONT_PATH))
-        if os.path.exists(KOREAN_FONT_BOLD_PATH):
-            pdfmetrics.registerFont(TTFont('NanumGothicBold', KOREAN_FONT_BOLD_PATH))
         
         KOREAN_FONT_REGISTERED = True
         return True
@@ -197,12 +199,14 @@ def cleanup_expired_files():
         with open(METADATA_FILE, 'r') as f:
             metadata = json.load(f)
         
-        current_time = datetime.now()
+        current_time = get_kst_now()
         valid_items = []
         
         for item in metadata:
             try:
                 expiry_time = datetime.fromisoformat(item['expiry_time'])
+                if expiry_time.tzinfo is None:
+                    expiry_time = expiry_time.replace(tzinfo=KST)
                 if current_time < expiry_time:
                     valid_items.append(item)
                 else:
@@ -223,7 +227,8 @@ def save_download_file(zip_data, display_name, original_filename):
         init_download_system()
         cleanup_expired_files()
         
-        file_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{original_filename}"
+        now = get_kst_now()
+        file_id = f"{now.strftime('%Y%m%d_%H%M%S')}_{original_filename}"
         file_path = os.path.join(DOWNLOAD_DIR, file_id)
         
         with open(file_path, 'wb') as f:
@@ -241,9 +246,9 @@ def save_download_file(zip_data, display_name, original_filename):
             'file_id': file_id,
             'display_name': display_name,
             'original_filename': original_filename,
-            'created_time': datetime.now().isoformat(),
-            'expiry_time': (datetime.now() + timedelta(hours=EXPIRY_HOURS)).isoformat(),
-            'created_display': datetime.now().strftime('%m/%d %H:%M')
+            'created_time': now.isoformat(),
+            'expiry_time': (now + timedelta(hours=EXPIRY_HOURS)).isoformat(),
+            'created_display': now.strftime('%m/%d %H:%M')
         }
         metadata.insert(0, new_item)
         metadata = metadata[:20]
@@ -267,12 +272,14 @@ def get_download_history():
         with open(METADATA_FILE, 'r') as f:
             metadata = json.load(f)
         
-        current_time = datetime.now()
+        current_time = get_kst_now()
         valid_items = []
         
         for item in metadata:
             try:
                 expiry_time = datetime.fromisoformat(item['expiry_time'])
+                if expiry_time.tzinfo is None:
+                    expiry_time = expiry_time.replace(tzinfo=KST)
                 if current_time < expiry_time:
                     remaining = expiry_time - current_time
                     hours_left = int(remaining.total_seconds() // 3600)
@@ -695,19 +702,31 @@ def add_header_to_summary(summary_text, header_info):
     return normalize_markdown_format(summary_text)
 
 def normalize_markdown_format(text):
-    """마크다운 포맷 일관성 유지 - 제목 계층 구조 정리"""
+    """마크다운 포맷 일관성 유지 - 요약문의 모든 소제목을 ### (lv3)로 통일"""
     if not text:
         return text
     
     lines = text.split('\n')
     result_lines = []
     
+    # 섹션 구분자 키워드 (## 레벨 유지)
+    section_keywords = ['[요약]', '[핵심포인트]', '[핵심 포인트]', '[새롭게', '[인터뷰이가', 
+                       '[답을', '[기업 사례]', '[유망', '[시사점]', '[핵심 코멘트]', 
+                       '[주요 통계]', '[tags]']
+    
     for line in lines:
-        # ## 로 시작하는 섹션 제목을 ### 로 변경 (# 이 문서 제목이므로)
-        # 단, [요약], [핵심포인트] 등의 섹션 구분자는 ## 로 유지
-        if line.startswith('## ') and not any(keyword in line for keyword in ['[요약]', '[핵심포인트]', '[핵심 포인트]', '[새롭게', '[인터뷰이가', '[답을', '[기업 사례]', '[유망', '[시사점]', '[핵심 코멘트]', '[주요 통계]', '[tags]']):
-            # 일반 ## 제목은 유지
+        # # 으로 시작하는 문서 제목은 유지
+        if line.startswith('# ') and not line.startswith('## '):
             result_lines.append(line)
+        # ## 로 시작하는 경우
+        elif line.startswith('## '):
+            # 섹션 구분자 키워드가 포함된 경우 ## 유지
+            if any(keyword in line for keyword in section_keywords):
+                result_lines.append(line)
+            else:
+                # 그 외의 ## 제목은 ### 로 변경
+                result_lines.append('###' + line[2:])
+        # ### 이상은 그대로 유지
         else:
             result_lines.append(line)
     
@@ -716,36 +735,66 @@ def normalize_markdown_format(text):
 # ============================================
 # 파일 변환 함수들
 # ============================================
+def set_docx_font(run, font_name='나눔고딕', font_size=11):
+    """DOCX Run에 폰트 설정"""
+    run.font.name = font_name
+    run.font.size = Pt(font_size)
+    # 한글 폰트 설정을 위한 추가 설정
+    r = run._element
+    rPr = r.get_or_add_rPr()
+    rFonts = rPr.get_or_add_rFonts()
+    rFonts.set(qn('w:eastAsia'), font_name)
+
 def create_docx(content, title="문서"):
-    """마크다운 텍스트를 DOCX로 변환"""
+    """마크다운 텍스트를 DOCX로 변환 (나눔고딕 폰트 적용)"""
     doc = Document()
+    
+    # 기본 스타일 설정
+    style = doc.styles['Normal']
+    style.font.name = '나눔고딕'
+    style.font.size = Pt(11)
+    style._element.rPr.rFonts.set(qn('w:eastAsia'), '나눔고딕')
     
     # 제목 스타일 설정
     title_para = doc.add_heading(title, 0)
     title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for run in title_para.runs:
+        set_docx_font(run, '나눔고딕', 18)
     
     lines = content.split('\n')
     for line in lines:
         stripped = line.strip()
         
         if stripped.startswith('# '):
-            # 문서 제목 (이미 위에서 추가했으므로 스킵하거나 H1으로)
             heading = doc.add_heading(stripped[2:], level=1)
+            for run in heading.runs:
+                set_docx_font(run, '나눔고딕', 16)
         elif stripped.startswith('## '):
-            doc.add_heading(stripped[3:], level=2)
+            heading = doc.add_heading(stripped[3:], level=2)
+            for run in heading.runs:
+                set_docx_font(run, '나눔고딕', 14)
         elif stripped.startswith('### '):
-            doc.add_heading(stripped[4:], level=3)
+            heading = doc.add_heading(stripped[4:], level=3)
+            for run in heading.runs:
+                set_docx_font(run, '나눔고딕', 12)
         elif stripped.startswith('#### '):
-            doc.add_heading(stripped[5:], level=4)
+            heading = doc.add_heading(stripped[5:], level=4)
+            for run in heading.runs:
+                set_docx_font(run, '나눔고딕', 11)
         elif stripped.startswith('- ') or stripped.startswith('* '):
-            doc.add_paragraph(stripped[2:], style='List Bullet')
+            p = doc.add_paragraph(stripped[2:], style='List Bullet')
+            for run in p.runs:
+                set_docx_font(run, '나눔고딕', 11)
         elif stripped.startswith('---'):
             # 구분선
-            doc.add_paragraph('─' * 50)
+            p = doc.add_paragraph('─' * 50)
+            for run in p.runs:
+                set_docx_font(run, '나눔고딕', 11)
         elif stripped.startswith('**') and stripped.endswith('**'):
             p = doc.add_paragraph()
             run = p.add_run(stripped.strip('*'))
             run.bold = True
+            set_docx_font(run, '나눔고딕', 11)
         elif stripped:
             # 인라인 볼드 처리
             p = doc.add_paragraph()
@@ -754,116 +803,13 @@ def create_docx(content, title="문서"):
                 if part.startswith('**') and part.endswith('**'):
                     run = p.add_run(part[2:-2])
                     run.bold = True
+                    set_docx_font(run, '나눔고딕', 11)
                 else:
-                    p.add_run(part)
+                    run = p.add_run(part)
+                    set_docx_font(run, '나눔고딕', 11)
     
     buffer = io.BytesIO()
     doc.save(buffer)
-    buffer.seek(0)
-    return buffer
-
-def create_pdf(content, title="문서"):
-    """텍스트를 PDF로 변환 (한글 폰트 지원)"""
-    font_available = setup_korean_font()
-    
-    buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    width, height = A4
-    
-    y = height - 50
-    line_height = 14
-    margin = 50
-    max_chars_per_line = 50
-    
-    if font_available and KOREAN_FONT_REGISTERED:
-        title_font = 'NanumGothicBold'
-        body_font = 'NanumGothic'
-    else:
-        title_font = 'Helvetica-Bold'
-        body_font = 'Helvetica'
-    
-    def safe_set_font(font_name, size):
-        try:
-            c.setFont(font_name, size)
-        except:
-            c.setFont('Helvetica', size)
-    
-    def new_page():
-        nonlocal y
-        c.showPage()
-        y = height - 50
-        safe_set_font(body_font, 10)
-    
-    def draw_text(text, font_size=10, is_bold=False):
-        nonlocal y
-        
-        if y < 60:
-            new_page()
-        
-        font = title_font if is_bold else body_font
-        safe_set_font(font, font_size)
-        
-        # 긴 텍스트 줄바꿈
-        if len(text) > max_chars_per_line:
-            words = text.split(' ')
-            current_line = ""
-            for word in words:
-                test_line = current_line + word + " "
-                if len(test_line) > max_chars_per_line:
-                    if current_line.strip():
-                        c.drawString(margin, y, current_line.strip())
-                        y -= line_height
-                        if y < 60:
-                            new_page()
-                    current_line = word + " "
-                else:
-                    current_line = test_line
-            if current_line.strip():
-                c.drawString(margin, y, current_line.strip())
-                y -= line_height
-        else:
-            c.drawString(margin, y, text)
-            y -= line_height
-    
-    # 제목
-    safe_set_font(title_font, 16)
-    c.drawString(margin, y, title)
-    y -= 30
-    
-    # 내용
-    safe_set_font(body_font, 10)
-    
-    lines = content.split('\n')
-    for line in lines:
-        stripped = line.strip()
-        
-        if stripped.startswith('# '):
-            y -= 10
-            draw_text(stripped[2:], 14, True)
-            y -= 5
-        elif stripped.startswith('## '):
-            y -= 8
-            draw_text(stripped[3:], 12, True)
-            y -= 3
-        elif stripped.startswith('### '):
-            y -= 5
-            draw_text(stripped[4:], 11, True)
-        elif stripped.startswith('#### '):
-            draw_text(stripped[5:], 10, True)
-        elif stripped.startswith('---'):
-            y -= 5
-            c.line(margin, y, width - margin, y)
-            y -= 10
-        elif stripped.startswith('- ') or stripped.startswith('* '):
-            draw_text('• ' + stripped[2:], 10, False)
-        elif stripped:
-            # 볼드 제거하고 일반 텍스트로
-            clean_text = re.sub(r'\*\*([^*]+)\*\*', r'\1', stripped)
-            draw_text(clean_text, 10, False)
-        else:
-            y -= line_height / 2  # 빈 줄
-    
-    c.save()
     buffer.seek(0)
     return buffer
 
@@ -877,7 +823,7 @@ def generate_zip_filename(user_emails, source_filename):
         if '@' in first_email:
             email_id = first_email.split('@')[0]
     
-    date_str = datetime.now().strftime('%y%m%d')
+    date_str = get_kst_now().strftime('%y%m%d')
     
     base_name = source_filename.rsplit('.', 1)[0] if '.' in source_filename else source_filename
     
@@ -963,7 +909,7 @@ def generate_email_body(file_results, total_time_sec, total_cost_krw):
 
 첨부파일을 확인해주세요! 문의사항 있으시면 편하게 말씀해주세요. 감사합니다! 🙇‍♀️
 
-───────────────────────────────────
+───────────────────────────────────────
 🎀 캐피 인터뷰(@사업1)
 """
     return body
@@ -1040,11 +986,11 @@ def main():
             
             st.markdown("---")
             
-            # 음성 파일용 출력 포맷 선택
+            # 음성 파일용 출력 포맷 선택 (PDF 제거, txt 추가)
             st.subheader("📝 출력 포맷")
             audio_output_md = st.checkbox("Markdown (.md)", value=True, key="audio_out_md")
             audio_output_docx = st.checkbox("Word (.docx)", value=True, key="audio_out_docx")
-            audio_output_pdf = st.checkbox("PDF (.pdf)", value=False, key="audio_out_pdf")
+            audio_output_txt = st.checkbox("Text (.txt)", value=True, key="audio_out_txt")
             
             st.markdown("---")
             st.info(f"💡 {MAX_FILE_SIZE_MB}MB 넘는 파일은 제가 알아서 나눠서 처리할게요!")
@@ -1056,10 +1002,11 @@ def main():
             
             st.markdown("---")
             
+            # 텍스트 파일용 출력 포맷 선택 (PDF 제거, txt 추가)
             st.subheader("📝 어떤 파일포맷이 편하세요?")
             output_md = st.checkbox("Markdown (.md)", value=True, key="out_md")
             output_docx = st.checkbox("Word (.docx)", value=True, key="out_docx")
-            output_pdf = st.checkbox("PDF (.pdf)", value=False, key="out_pdf")
+            output_txt = st.checkbox("Text (.txt)", value=True, key="out_txt")
         
         st.markdown("---")
         
@@ -1139,7 +1086,7 @@ def main():
             total_size = sum([f.size for f in audio_files])
             st.info(f"📊 총 크기: {total_size / 1024 / 1024:.2f} MB")
             
-            with st.expander("📝 파일 목록"):
+            with st.expander("📁 파일 목록"):
                 for idx, f in enumerate(audio_files, 1):
                     file_size_mb = f.size / (1024 * 1024)
                     st.caption(f"{idx}. {f.name} ({file_size_mb:.1f} MB)")
@@ -1149,7 +1096,7 @@ def main():
             if st.button(f"🚀 처리 시작!", type="primary", use_container_width=True):
                 st.markdown("---")
                 
-                job_start_time = datetime.now()
+                job_start_time = get_kst_now()
                 total_start_time = time.time()
                 
                 user_emails = st.session_state.get('user_emails_list', [])
@@ -1165,7 +1112,7 @@ def main():
                     task_types.append("요약")
                 
                 st.markdown("#### 📥 처리 중...")
-                st.caption(f"📋 {email_id if email_id else '-'} | {len(audio_files)}개 파일 ({', '.join(task_types)}) | {job_start_time.strftime('%H:%M:%S')}")
+                st.caption(f"📋 {email_id if email_id else '-'} | {len(audio_files)}개 파일 ({', '.join(task_types)}) | {job_start_time.strftime('%H:%M:%S')} KST")
                 
                 total_input_tokens = 0
                 total_output_tokens = 0
@@ -1177,7 +1124,7 @@ def main():
                 overall_status = st.empty()
                 
                 for idx, audio_file in enumerate(audio_files, 1):
-                    overall_status.caption(f"🔄 ({idx}/{total}) {audio_file.name}")
+                    overall_status.caption(f"📄 ({idx}/{total}) {audio_file.name}")
                     overall_progress.progress((idx - 1) / total)
                     
                     file_size_mb = audio_file.size / (1024 * 1024)
@@ -1270,27 +1217,31 @@ def main():
                             if result['transcribed']:
                                 zf.writestr(f"{base_name}_whisper.txt", result['transcribed'])
                             
-                            # 트랜스크립트
+                            # 트랜스크립트 (md, docx, txt)
                             if result['transcript']:
                                 if audio_output_md:
                                     zf.writestr(f"{base_name}_transcript.md", result['transcript'])
                                 if audio_output_docx:
                                     docx_buffer = create_docx(result['transcript'], f"{base_name} Transcript")
                                     zf.writestr(f"{base_name}_transcript.docx", docx_buffer.read())
-                                if audio_output_pdf:
-                                    pdf_buffer = create_pdf(result['transcript'], f"{base_name} Transcript")
-                                    zf.writestr(f"{base_name}_transcript.pdf", pdf_buffer.read())
+                                if audio_output_txt:
+                                    # 마크다운 문법 제거한 plain text
+                                    plain_text = re.sub(r'[#*_\-]+', '', result['transcript'])
+                                    plain_text = re.sub(r'\n{3,}', '\n\n', plain_text)
+                                    zf.writestr(f"{base_name}_transcript.txt", plain_text)
                             
-                            # 요약문
+                            # 요약문 (md, docx, txt)
                             if result['summary']:
                                 if audio_output_md:
                                     zf.writestr(f"{base_name}_summary.md", result['summary'])
                                 if audio_output_docx:
                                     docx_buffer = create_docx(result['summary'], f"{base_name} Summary")
                                     zf.writestr(f"{base_name}_summary.docx", docx_buffer.read())
-                                if audio_output_pdf:
-                                    pdf_buffer = create_pdf(result['summary'], f"{base_name} Summary")
-                                    zf.writestr(f"{base_name}_summary.pdf", pdf_buffer.read())
+                                if audio_output_txt:
+                                    # 마크다운 문법 제거한 plain text
+                                    plain_text = re.sub(r'[#*_\-]+', '', result['summary'])
+                                    plain_text = re.sub(r'\n{3,}', '\n\n', plain_text)
+                                    zf.writestr(f"{base_name}_summary.txt", plain_text)
                     
                     zip_buffer.seek(0)
                     zip_data = zip_buffer.getvalue()
@@ -1320,7 +1271,7 @@ def main():
                             attachments = [(zip_filename, zip_data)]
                             success, msg = send_email(
                                 user_emails,
-                                f"[캐피 인터뷰] 인터뷰 정리 결과 - {datetime.now().strftime('%Y-%m-%d')}",
+                                f"[캐피 인터뷰] 인터뷰 정리 결과 - {get_kst_now().strftime('%Y-%m-%d')}",
                                 email_body,
                                 attachments
                             )
@@ -1345,7 +1296,7 @@ def main():
         if text_files:
             st.success(f"✅ {len(text_files)}개 파일")
             
-            with st.expander("📝 파일 목록"):
+            with st.expander("📁 파일 목록"):
                 for idx, f in enumerate(text_files, 1):
                     st.caption(f"{idx}. {f.name} ({f.size / 1024:.1f} KB)")
             
@@ -1354,7 +1305,7 @@ def main():
             if st.button(f"🚀 처리 시작!", type="primary", use_container_width=True):
                 st.markdown("---")
                 
-                job_start_time = datetime.now()
+                job_start_time = get_kst_now()
                 total_start_time = time.time()
                 
                 user_emails = st.session_state.get('user_emails_list', [])
@@ -1370,7 +1321,7 @@ def main():
                     task_types.append("요약")
                 
                 st.markdown("#### 📥 처리 중...")
-                st.caption(f"📋 {email_id if email_id else '-'} | {len(text_files)}개 파일 ({', '.join(task_types)}) | {job_start_time.strftime('%H:%M:%S')}")
+                st.caption(f"📋 {email_id if email_id else '-'} | {len(text_files)}개 파일 ({', '.join(task_types)}) | {job_start_time.strftime('%H:%M:%S')} KST")
                 
                 total_input_tokens = 0
                 total_output_tokens = 0
@@ -1381,7 +1332,7 @@ def main():
                 overall_status = st.empty()
                 
                 for idx, text_file in enumerate(text_files, 1):
-                    overall_status.caption(f"🔄 ({idx}/{total}) {text_file.name}")
+                    overall_status.caption(f"📄 ({idx}/{total}) {text_file.name}")
                     overall_progress.progress((idx - 1) / total)
                     
                     content = read_file(text_file)
@@ -1464,25 +1415,31 @@ def main():
                         for result in text_results:
                             base_name = result['filename'].rsplit('.', 1)[0]
                             
+                            # 트랜스크립트 (md, docx, txt)
                             if result['transcript']:
                                 if output_md:
                                     zf.writestr(f"{base_name}_transcript.md", result['transcript'])
                                 if output_docx:
                                     docx_buffer = create_docx(result['transcript'], f"{base_name} Transcript")
                                     zf.writestr(f"{base_name}_transcript.docx", docx_buffer.read())
-                                if output_pdf:
-                                    pdf_buffer = create_pdf(result['transcript'], f"{base_name} Transcript")
-                                    zf.writestr(f"{base_name}_transcript.pdf", pdf_buffer.read())
+                                if output_txt:
+                                    # 마크다운 문법 제거한 plain text
+                                    plain_text = re.sub(r'[#*_\-]+', '', result['transcript'])
+                                    plain_text = re.sub(r'\n{3,}', '\n\n', plain_text)
+                                    zf.writestr(f"{base_name}_transcript.txt", plain_text)
                             
+                            # 요약문 (md, docx, txt)
                             if result['summary']:
                                 if output_md:
                                     zf.writestr(f"{base_name}_summary.md", result['summary'])
                                 if output_docx:
                                     docx_buffer = create_docx(result['summary'], f"{base_name} Summary")
                                     zf.writestr(f"{base_name}_summary.docx", docx_buffer.read())
-                                if output_pdf:
-                                    pdf_buffer = create_pdf(result['summary'], f"{base_name} Summary")
-                                    zf.writestr(f"{base_name}_summary.pdf", pdf_buffer.read())
+                                if output_txt:
+                                    # 마크다운 문법 제거한 plain text
+                                    plain_text = re.sub(r'[#*_\-]+', '', result['summary'])
+                                    plain_text = re.sub(r'\n{3,}', '\n\n', plain_text)
+                                    zf.writestr(f"{base_name}_summary.txt", plain_text)
                     
                     zip_buffer.seek(0)
                     zip_data = zip_buffer.getvalue()
@@ -1512,7 +1469,7 @@ def main():
                             attachments = [(zip_filename, zip_data)]
                             success, msg = send_email(
                                 user_emails,
-                                f"[캐피 인터뷰] 인터뷰 정리 결과 - {datetime.now().strftime('%Y-%m-%d')}",
+                                f"[캐피 인터뷰] 인터뷰 정리 결과 - {get_kst_now().strftime('%Y-%m-%d')}",
                                 email_body,
                                 attachments
                             )
