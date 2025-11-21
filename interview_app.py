@@ -587,9 +587,6 @@ def generate_email_body(results, files, file_type, do_transcript, do_summary, ou
 💰 열심히 하고 있는데 그래도 이 만큼 걸리네요 ⏱️
 ─────────────────────────────────────────────────
 • 소요 시간/비용: {minutes}분 {seconds}초 / 약 {costs['total_krw']:,.0f}원
-
-
-😊 오늘도 좋은 하루 되세요 - 캐피 드림 😊
 """
     return body
 
@@ -622,9 +619,12 @@ def main():
     if not check_password():
         return
     
-    # 헤더
+    # 헤더 - 진행 상태에 따라 다르게 표시
     st.markdown("# 😊 캐피 인터뷰")
-    st.markdown("인터뷰를 정리하는 캐피입니다. 음원/텍스트를 올려주세요! 📎")
+    if st.session_state.get('processing', False):
+        st.markdown("꼼꼼하게 정리해 볼게요! 기대해 주세요 📎")
+    else:
+        st.markdown("인터뷰를 정리하는 캐피입니다. 음원/텍스트를 올려주세요! 📎")
     
     # 프롬프트 로드
     try:
@@ -732,24 +732,21 @@ def main():
         out_txt = st.session_state.proc_out_txt
         emails = st.session_state.proc_emails
         
-        # 진행 화면 헤더 변경
-        st.markdown("꼼꼼하게 정리해 볼게요! 기대해 주세요 📎")
-        
         # 진행 단계 정의
         if is_audio:
             if do_transcript and do_summary:
-                steps = ["받아쓰기", "번역/노트정리", "요약", "파일생성", "이메일발송"]
+                steps = ["받아쓰기", "노트정리", "요약", "파일생성", "이메일발송"]
             elif do_transcript:
-                steps = ["받아쓰기", "번역/노트정리", "파일생성", "이메일발송"]
+                steps = ["받아쓰기", "노트정리", "파일생성", "이메일발송"]
             elif do_summary:
                 steps = ["받아쓰기", "요약", "파일생성", "이메일발송"]
             else:
                 steps = ["받아쓰기", "파일생성", "이메일발송"]
         else:
             if do_transcript and do_summary:
-                steps = ["파일읽기", "번역/노트정리", "요약", "파일생성", "이메일발송"]
+                steps = ["파일읽기", "트랜스크립트", "요약", "파일생성", "이메일발송"]
             elif do_transcript:
-                steps = ["파일읽기", "번역/노트정리", "파일생성", "이메일발송"]
+                steps = ["파일읽기", "트랜스크립트", "파일생성", "이메일발송"]
             elif do_summary:
                 steps = ["파일읽기", "요약", "파일생성", "이메일발송"]
             else:
@@ -773,8 +770,7 @@ def main():
         
         # 하단 안내 메시지
         st.markdown("---")
-        st.info("📨 작업이 시작되었습니다! 끝나면 이메일로 결과를 보내드릴게요.")
-        st.caption("💡 이 화면을 닫아도 캐피는 계속 일할 수 있어요.")
+        st.info("📨 작업이 시작되었습니다! 끝나면 이메일로 결과를 보내드릴게요 (이 화면을 닫아도 캐피는 계속 일해요)")
         
         # 실제 처리 시작
         results = []
