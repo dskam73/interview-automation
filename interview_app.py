@@ -418,7 +418,7 @@ def process_with_claude(content, prompt, task_name):
         
         # Claude Sonnet 4.5 모델 사용
         message = client.messages.create(
-            model="claude-sonnet-4-5-20250514",  # Sonnet 4.5 모델
+            model="claude-sonnet-4-5-20250929",  # Sonnet 4.5 모델
             max_tokens=16000,
             temperature=0,
             messages=[{"role": "user", "content": f"{prompt}\n\n# 처리할 인터뷰 내용:\n\n{content}"}]
