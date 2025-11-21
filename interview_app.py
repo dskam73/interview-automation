@@ -511,6 +511,88 @@ def calculate_costs(audio_min=0, in_tok=0, out_tok=0):
     total_krw = (whisper + claude) * USD_TO_KRW
     return {'total_krw': total_krw, 'whisper_usd': whisper, 'claude_usd': claude}
 
+def generate_email_body(results, files, file_type, do_transcript, do_summary, out_md, out_docx, out_txt, minutes, seconds, costs):
+    """상세한 이메일 본문 생성"""
+    is_audio = file_type == 'audio'
+    file_type_label = "음성" if is_audio else "텍스트"
+    
+    # 입력 파일 목록
+    input_list = []
+    for idx, f in enumerate(files, 1):
+        input_list.append(f"{idx}. {f.name} ({file_type_label})")
+    input_section = "\n".join(input_list)
+    
+    # 출력 파일 목록
+    output_list = []
+    for idx, r in enumerate(results, 1):
+        base = r['base_name']
+        lines = [f"{idx}. {r['filename']} ({file_type_label})"]
+        
+        # 녹취 원본 (음성인 경우)
+        if r.get('whisper'):
+            lines.append(f"   - 녹취(원본): {base}_whisper.txt")
+        
+        # 트랜스크립트/노트정리
+        if r.get('transcript'):
+            formats = []
+            if out_docx:
+                formats.append(f"{base}.docx")
+            if out_md:
+                formats.append(f"{base}.md")
+            if out_txt:
+                formats.append(f"{base}.txt")
+            if formats:
+                label = "녹취(번역/정리)" if is_audio else "트랜스크립트"
+                lines.append(f"   - {label}: {', '.join(formats)}")
+        
+        # 요약
+        if r.get('summary'):
+            formats = []
+            if out_docx:
+                formats.append(f"#{base}.docx")
+            if out_md:
+                formats.append(f"#{base}.md")
+            if out_txt:
+                formats.append(f"#{base}.txt")
+            if formats:
+                lines.append(f"   - 요약: {', '.join(formats)}")
+        
+        output_list.append("\n".join(lines))
+    
+    output_section = "\n".join(output_list)
+    
+    # 작업 내용 설명
+    tasks = []
+    if is_audio:
+        tasks.append("받아쓰기")
+    if do_transcript:
+        tasks.append("번역" if is_audio else "정리")
+    if do_summary:
+        tasks.append("요약")
+    task_desc = ", ".join(tasks) if tasks else "정리"
+    
+    body = f"""안녕하세요! 캐피입니다 😊
+인터뷰 정리 결과를 보내드립니다.
+
+📄 다음 파일들을 제게 주셨어요 ({len(files)}개)
+─────────────────────────────────────────────────
+{input_section}
+
+✅ 주신 파일별로 {task_desc}를 했습니다
+─────────────────────────────────────────────────
+{output_section}
+
+※ 첨부파일을 확인해주세요!
+
+💰 열심히 하고 있는데 그래도 이 만큼 걸리네요 ⏱️
+─────────────────────────────────────────────────
+• 소요 시간/비용: {minutes}분 {seconds}초 / 약 {costs['total_krw']:,.0f}원
+
+
+😊 오늘도 좋은 하루 되세요 - 캐피 드림 😊
+"""
+    return body
+
 # ============================================
 # 비밀번호 체크
 # ============================================
@@ -563,82 +645,80 @@ def main():
             accept_multiple_files=True,
             label_visibility="collapsed"
         )
-    
-    if uploaded_files:
-        # 파일 타입 감지
-        audio_exts = ['mp3', 'wav', 'm4a', 'ogg', 'webm']
-        text_exts = ['txt', 'md']
         
-        is_audio = any(f.name.split('.')[-1].lower() in audio_exts for f in uploaded_files)
-        is_text = any(f.name.split('.')[-1].lower() in text_exts for f in uploaded_files)
-        
-        if is_audio and is_text:
-            st.warning("⚠️ 음성 파일과 텍스트 파일을 섞어서 올릴 수 없어요. 한 종류만 올려주세요.")
-            return
-        
-        file_type = 'audio' if is_audio else 'text'
-        
-        # 제한 체크
-        usage = check_usage_limit(file_type, len(uploaded_files))
-        if not usage['can_process']:
-            st.error("⚠️ 오늘 처리 한도에 도달했어요. 내일 이용해주세요!")
-            return
-        
-        files = uploaded_files[:min(MAX_FILES_PER_UPLOAD, usage['allowed'])]
-        if len(uploaded_files) > len(files):
-            st.info(f"💡 {len(files)}개만 처리됩니다. (한도: {MAX_FILES_PER_UPLOAD}개/회, 남은 한도: {usage['remaining']}개/일)")
-        
-        total_size = sum(f.size for f in files) / 1024 / 1024
-        st.caption(f"✅ {len(files)}개 파일 · {total_size:.1f} MB")
-        
-        st.markdown("---")
-        
-        # 옵션 선택
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("**📝 정리 옵션**")
-            if is_audio:
-                do_transcript = st.checkbox("노트 정리", value=True)
+        if uploaded_files:
+            # 파일 타입 감지
+            audio_exts = ['mp3', 'wav', 'm4a', 'ogg', 'webm']
+            text_exts = ['txt', 'md']
+            
+            is_audio = any(f.name.split('.')[-1].lower() in audio_exts for f in uploaded_files)
+            is_text = any(f.name.split('.')[-1].lower() in text_exts for f in uploaded_files)
+            
+            if is_audio and is_text:
+                st.warning("⚠️ 음성 파일과 텍스트 파일을 섞어서 올릴 수 없어요. 한 종류만 올려주세요.")
             else:
-                do_transcript = st.checkbox("풀 트랜스크립트", value=True)
-            do_summary = st.checkbox("요약문 작성", value=False)
-        
-        with col2:
-            st.markdown("**📁 출력 형식**")
-            out_md = st.checkbox("Markdown", value=True)
-            out_docx = st.checkbox("Word", value=True)
-            out_txt = st.checkbox("Text", value=False)
-        
-        st.markdown("---")
-        
-        # 이메일 입력 (필수)
-        st.markdown("**📧 결과 받을 이메일** (필수)")
-        email_input = st.text_input("이메일 주소 (콤마로 구분, 최대 5명)", placeholder="user@company.com", label_visibility="collapsed")
-        emails = [e.strip() for e in email_input.split(',') if e.strip() and '@' in e][:5]
-        
-        if emails:
-            st.caption(f"📬 {len(emails)}명: {', '.join(emails)}")
-        
-        st.markdown("---")
-        
-        # 시작 버튼
-        can_start = len(emails) > 0
-        
-        if not can_start:
-            st.warning("📧 결과를 받을 이메일을 입력해주세요.")
-        
-        if st.button("🚀 시작", type="primary", use_container_width=True, disabled=not can_start):
-            # 세션에 작업 정보 저장
-            st.session_state.processing = True
-            st.session_state.proc_files = files
-            st.session_state.proc_file_type = file_type
-            st.session_state.proc_do_transcript = do_transcript
-            st.session_state.proc_do_summary = do_summary
-            st.session_state.proc_out_md = out_md
-            st.session_state.proc_out_docx = out_docx
-            st.session_state.proc_out_txt = out_txt
-            st.session_state.proc_emails = emails
-            st.rerun()
+                file_type = 'audio' if is_audio else 'text'
+                
+                # 제한 체크
+                usage = check_usage_limit(file_type, len(uploaded_files))
+                if not usage['can_process']:
+                    st.error("⚠️ 오늘 처리 한도에 도달했어요. 내일 이용해주세요!")
+                else:
+                    files = uploaded_files[:min(MAX_FILES_PER_UPLOAD, usage['allowed'])]
+                    if len(uploaded_files) > len(files):
+                        st.info(f"💡 {len(files)}개만 처리됩니다. (한도: {MAX_FILES_PER_UPLOAD}개/회, 남은 한도: {usage['remaining']}개/일)")
+                    
+                    total_size = sum(f.size for f in files) / 1024 / 1024
+                    st.caption(f"✅ {len(files)}개 파일 · {total_size:.1f} MB")
+                    
+                    st.markdown("---")
+                    
+                    # 옵션 선택
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown("**📝 정리 옵션**")
+                        if is_audio:
+                            do_transcript = st.checkbox("노트 정리", value=True)
+                        else:
+                            do_transcript = st.checkbox("풀 트랜스크립트", value=True)
+                        do_summary = st.checkbox("요약문 작성", value=False)
+                    
+                    with col2:
+                        st.markdown("**📁 출력 형식**")
+                        out_md = st.checkbox("Markdown", value=True)
+                        out_docx = st.checkbox("Word", value=True)
+                        out_txt = st.checkbox("Text", value=False)
+                    
+                    st.markdown("---")
+                    
+                    # 이메일 입력 (필수)
+                    st.markdown("**📧 결과 받을 이메일** (필수)")
+                    email_input = st.text_input("이메일 주소 (콤마로 구분, 최대 5명)", placeholder="user@company.com", label_visibility="collapsed")
+                    emails = [e.strip() for e in email_input.split(',') if e.strip() and '@' in e][:5]
+                    
+                    if emails:
+                        st.caption(f"📬 {len(emails)}명: {', '.join(emails)}")
+                    
+                    st.markdown("---")
+                    
+                    # 시작 버튼
+                    can_start = len(emails) > 0
+                    
+                    if not can_start:
+                        st.warning("📧 결과를 받을 이메일을 입력해주세요.")
+                    
+                    if st.button("🚀 시작", type="primary", use_container_width=True, disabled=not can_start):
+                        # 세션에 작업 정보 저장
+                        st.session_state.processing = True
+                        st.session_state.proc_files = files
+                        st.session_state.proc_file_type = file_type
+                        st.session_state.proc_do_transcript = do_transcript
+                        st.session_state.proc_do_summary = do_summary
+                        st.session_state.proc_out_md = out_md
+                        st.session_state.proc_out_docx = out_docx
+                        st.session_state.proc_out_txt = out_txt
+                        st.session_state.proc_emails = emails
+                        st.rerun()
     
     # ========== 진행 UI ==========
     if st.session_state.get('processing', False):
@@ -658,18 +738,18 @@ def main():
         # 진행 단계 정의
         if is_audio:
             if do_transcript and do_summary:
-                steps = ["받아쓰기", "노트정리", "요약", "파일생성", "이메일발송"]
+                steps = ["받아쓰기", "번역/노트정리", "요약", "파일생성", "이메일발송"]
             elif do_transcript:
-                steps = ["받아쓰기", "노트정리", "파일생성", "이메일발송"]
+                steps = ["받아쓰기", "번역/노트정리", "파일생성", "이메일발송"]
             elif do_summary:
                 steps = ["받아쓰기", "요약", "파일생성", "이메일발송"]
             else:
                 steps = ["받아쓰기", "파일생성", "이메일발송"]
         else:
             if do_transcript and do_summary:
-                steps = ["파일읽기", "트랜스크립트", "요약", "파일생성", "이메일발송"]
+                steps = ["파일읽기", "번역/노트정리", "요약", "파일생성", "이메일발송"]
             elif do_transcript:
-                steps = ["파일읽기", "트랜스크립트", "파일생성", "이메일발송"]
+                steps = ["파일읽기", "번역/노트정리", "파일생성", "이메일발송"]
             elif do_summary:
                 steps = ["파일읽기", "요약", "파일생성", "이메일발송"]
             else:
@@ -814,19 +894,11 @@ def main():
             
             minutes = int(elapsed // 60)
             seconds = int(elapsed % 60)
-            body = f"""안녕하세요! 캐피입니다 😊
-
-인터뷰 정리 결과를 공유드립니다.
-
-• 처리 파일: {len(results)}개
-• 소요 시간: {minutes}분 {seconds}초
-• 처리 비용: 약 {costs['total_krw']:,.0f}원
-
-첨부파일을 확인해주세요!
-
-───────────────────────────
-😊 캐피 인터뷰
-"""
+            
+            # 이메일 본문 생성
+            body = generate_email_body(results, files, file_type, do_transcript, do_summary, 
+                                       out_md, out_docx, out_txt, minutes, seconds, costs)
+            
             email_success, _ = send_email(emails, f"[캐피 인터뷰] 인터뷰 정리 결과 - {get_kst_now().strftime('%Y-%m-%d')}", body, [(zip_filename, zip_data)])
             
             # 완료 표시
