@@ -14,6 +14,8 @@ from email.mime.base import MIMEBase
 from email import encoders
 import subprocess
 import json
+import ssl
+import re
 
 # 문서 생성용
 from docx import Document
@@ -48,7 +50,7 @@ def init_download_system():
             with open(METADATA_FILE, 'w') as f:
                 json.dump([], f)
     except Exception:
-        pass  # 초기화 실패해도 앱은 계속 실행
+        pass
 
 def cleanup_expired_files():
     """만료된 파일 정리"""
@@ -68,19 +70,17 @@ def cleanup_expired_files():
                 if current_time < expiry_time:
                     valid_items.append(item)
                 else:
-                    # 만료된 파일 삭제
                     file_path = os.path.join(DOWNLOAD_DIR, item['file_id'])
                     if os.path.exists(file_path):
                         os.remove(file_path)
             except Exception:
-                continue  # 개별 항목 오류 무시
+                continue
         
-        # 메타데이터 업데이트
         with open(METADATA_FILE, 'w') as f:
             json.dump(valid_items, f)
             
     except Exception:
-        pass  # 정리 실패해도 앱은 계속 실행
+        pass
 
 def save_download_file(zip_data, display_name, original_filename):
     """다운로드 파일 저장 및 메타데이터 기록"""
@@ -88,15 +88,12 @@ def save_download_file(zip_data, display_name, original_filename):
         init_download_system()
         cleanup_expired_files()
         
-        # 고유 파일 ID 생성
         file_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{original_filename}"
         file_path = os.path.join(DOWNLOAD_DIR, file_id)
         
-        # 파일 저장
         with open(file_path, 'wb') as f:
             f.write(zip_data)
         
-        # 메타데이터 읽기
         metadata = []
         if os.path.exists(METADATA_FILE):
             try:
@@ -105,7 +102,6 @@ def save_download_file(zip_data, display_name, original_filename):
             except Exception:
                 metadata = []
         
-        # 새 항목 추가
         new_item = {
             'file_id': file_id,
             'display_name': display_name,
@@ -115,18 +111,14 @@ def save_download_file(zip_data, display_name, original_filename):
             'created_display': datetime.now().strftime('%m/%d %H:%M')
         }
         metadata.insert(0, new_item)
-        
-        # 최대 20개까지만 유지
         metadata = metadata[:20]
         
-        # 메타데이터 저장
         with open(METADATA_FILE, 'w') as f:
             json.dump(metadata, f)
         
         return True
         
     except Exception as e:
-        # 저장 실패해도 앱은 계속 실행
         return False
 
 def get_download_history():
@@ -141,7 +133,6 @@ def get_download_history():
         with open(METADATA_FILE, 'r') as f:
             metadata = json.load(f)
         
-        # 만료 시간 남은 것만 반환
         current_time = datetime.now()
         valid_items = []
         
@@ -149,7 +140,6 @@ def get_download_history():
             try:
                 expiry_time = datetime.fromisoformat(item['expiry_time'])
                 if current_time < expiry_time:
-                    # 남은 시간 계산
                     remaining = expiry_time - current_time
                     hours_left = int(remaining.total_seconds() // 3600)
                     minutes_left = int((remaining.total_seconds() % 3600) // 60)
@@ -181,6 +171,57 @@ if 'active_tab' not in st.session_state:
     st.session_state.active_tab = "audio"
 
 # ============================================
+# 파일명 생성 유틸리티
+# ============================================
+def get_date_string():
+    """날짜 문자열 반환 (YYMMDD 형식)"""
+    return datetime.now().strftime('%y%m%d')
+
+def sanitize_email_for_filename(email):
+    """이메일을 파일명에 사용 가능하게 변환"""
+    if not email:
+        return "unknown"
+    # @ 앞부분만 사용하거나 전체 이메일 사용
+    return email.replace('@', '_at_').replace('.', '_')
+
+def get_language_code_from_task(task):
+    """Whisper 태스크에서 언어 코드 반환"""
+    if task == "translate":
+        return "en"  # 영어로 번역
+    return "orig"  # 원본 언어
+
+def generate_zip_filename(requester_email, source_filename, file_type="audio"):
+    """
+    ZIP 파일명 생성
+    예: dskam_at_naver_com+251121+AAA.zip
+    """
+    date_str = get_date_string()
+    base_name = source_filename.rsplit('.', 1)[0] if '.' in source_filename else source_filename
+    
+    if requester_email:
+        email_part = sanitize_email_for_filename(requester_email)
+        return f"{email_part}+{date_str}+{base_name}.zip"
+    else:
+        return f"interview+{date_str}+{base_name}.zip"
+
+def generate_output_filenames(base_name, whisper_lang="orig"):
+    """
+    출력 파일명 생성
+    - whisper: AAA.{lang}.txt
+    - transcript: AAA.ko.md, AAA.ko.pdf, AAA.ko.docx
+    - summary: #AAA.ko.md, #AAA.ko.pdf, #AAA.ko.docx
+    """
+    return {
+        'whisper': f"{base_name}.{whisper_lang}.txt",
+        'transcript_md': f"{base_name}.ko.md",
+        'transcript_pdf': f"{base_name}.ko.pdf",
+        'transcript_docx': f"{base_name}.ko.docx",
+        'summary_md': f"#{base_name}.ko.md",
+        'summary_pdf': f"#{base_name}.ko.pdf",
+        'summary_docx': f"#{base_name}.ko.docx",
+    }
+
+# ============================================
 # 파일 분할 기능 (20MB 단위) - ffmpeg 사용
 # ============================================
 MAX_FILE_SIZE_MB = 20
@@ -201,19 +242,8 @@ def get_audio_duration(file_path):
         return None
 
 def split_audio_with_ffmpeg(input_path, output_dir, chunk_duration_sec=600):
-    """
-    ffmpeg를 사용하여 오디오 파일을 청크로 분할
-    
-    Args:
-        input_path: 입력 파일 경로
-        output_dir: 출력 디렉토리
-        chunk_duration_sec: 청크 길이 (초), 기본 10분
-    
-    Returns:
-        list: 분할된 청크 정보 리스트
-    """
+    """ffmpeg를 사용하여 오디오 파일을 청크로 분할"""
     try:
-        # 전체 길이 확인
         total_duration = get_audio_duration(input_path)
         if total_duration is None:
             return None
@@ -226,7 +256,6 @@ def split_audio_with_ffmpeg(input_path, output_dir, chunk_duration_sec=600):
             end_time = min(start_time + chunk_duration_sec, total_duration)
             output_path = os.path.join(output_dir, f"chunk_{chunk_index:03d}.mp3")
             
-            # ffmpeg로 청크 추출
             cmd = [
                 'ffmpeg', '-y', '-i', input_path,
                 '-ss', str(start_time),
@@ -234,13 +263,12 @@ def split_audio_with_ffmpeg(input_path, output_dir, chunk_duration_sec=600):
                 '-acodec', 'libmp3lame',
                 '-ab', '128k',
                 '-ar', '44100',
-                '-ac', '1',  # 모노로 변환하여 크기 절약
+                '-ac', '1',
                 output_path
             ]
             
             subprocess.run(cmd, capture_output=True, check=True)
             
-            # 청크 정보 저장
             chunks.append({
                 'index': chunk_index,
                 'path': output_path,
@@ -262,62 +290,40 @@ def split_audio_with_ffmpeg(input_path, output_dir, chunk_duration_sec=600):
         return None
 
 def split_audio_file(audio_file, max_size_mb=20):
-    """
-    오디오 파일을 지정된 크기 이하의 청크로 분할
-    
-    Args:
-        audio_file: Streamlit 업로드 파일 객체
-        max_size_mb: 최대 파일 크기 (MB)
-    
-    Returns:
-        list: 분할된 오디오 청크들의 정보 리스트
-    """
+    """오디오 파일을 지정된 크기 이하의 청크로 분할"""
     try:
         file_size_mb = audio_file.size / (1024 * 1024)
         
-        # 파일 크기가 제한 이하면 분할 불필요
         if file_size_mb <= max_size_mb:
             return None
         
-        # 임시 디렉토리 생성
         temp_dir = tempfile.mkdtemp()
         file_extension = audio_file.name.split('.')[-1].lower()
         input_path = os.path.join(temp_dir, f"input.{file_extension}")
         
-        # 파일 저장
         with open(input_path, 'wb') as f:
             f.write(audio_file.read())
         
-        # 파일 포인터 리셋
         audio_file.seek(0)
         
-        # 전체 길이 확인
         total_duration = get_audio_duration(input_path)
         if total_duration is None:
             return None
         
-        # 청크 길이 계산 (파일 크기 기반)
-        # 예: 80MB 파일 → 4개 청크 필요 → 각 청크는 전체 길이/4
         num_chunks = int(file_size_mb / max_size_mb) + 1
         chunk_duration_sec = total_duration / num_chunks
-        
-        # 최소 60초, 최대 1200초 (20분) 제한
         chunk_duration_sec = max(60, min(chunk_duration_sec, 1200))
         
         st.info(f"📊 총 길이: {total_duration/60:.1f}분 → {num_chunks}개 청크로 분할 (청크당 약 {chunk_duration_sec/60:.1f}분)")
         
-        # 분할 실행
         chunks = split_audio_with_ffmpeg(input_path, temp_dir, chunk_duration_sec)
         
         if chunks:
-            # 각 청크의 바이트 데이터 로드
             for chunk in chunks:
                 with open(chunk['path'], 'rb') as f:
                     chunk['data'] = io.BytesIO(f.read())
-                # 임시 파일 삭제
                 os.unlink(chunk['path'])
             
-            # 입력 파일 삭제
             os.unlink(input_path)
             os.rmdir(temp_dir)
         
@@ -368,44 +374,39 @@ def transcribe_audio_with_duration(audio_file, task="transcribe"):
     """
     OpenAI Whisper API를 사용하여 음성을 텍스트로 변환
     20MB 초과 파일은 자동으로 분할 처리
-    Returns: (전사텍스트, 오디오길이_초)
+    Returns: (전사텍스트, 오디오길이_초, 감지된_언어)
     """
     try:
         api_key = st.secrets.get("OPENAI_API_KEY")
         if not api_key:
             st.error("⚠️ OpenAI API 키가 설정되지 않았습니다.")
-            return None, 0
+            return None, 0, None
         
         client = openai.OpenAI(api_key=api_key)
         file_size_mb = audio_file.size / (1024 * 1024)
         audio_duration_sec = 0
+        detected_language = None
         
-        # 파일 크기 확인 및 분할 처리
         if file_size_mb > MAX_FILE_SIZE_MB:
             st.info(f"📦 파일 크기: {file_size_mb:.1f}MB - {MAX_FILE_SIZE_MB}MB 초과로 자동 분할합니다...")
             
-            # 파일 분할
             with st.spinner("🔪 오디오 파일 분할 중..."):
                 chunks = split_audio_file(audio_file, MAX_FILE_SIZE_MB)
             
             if chunks is None:
                 st.error("파일 분할에 실패했습니다.")
-                return None, 0
+                return None, 0, None
             
-            # 전체 오디오 길이 계산
             if chunks:
                 audio_duration_sec = chunks[-1]['end_time']
             
             st.success(f"✅ {len(chunks)}개 청크로 나눴어요!")
             
-            # 예상 시간 안내
-            estimated_time = len(chunks) * 60  # 청크당 약 1분 예상
+            estimated_time = len(chunks) * 60
             st.info(f"⏱️ 예상 소요 시간: 약 {estimated_time // 60}분 ~ {(estimated_time * 2) // 60}분")
             
-            # 각 청크별 전사
             all_transcripts = []
             
-            # 진행 상태 표시 영역
             progress_container = st.container()
             with progress_container:
                 col1, col2 = st.columns([3, 1])
@@ -420,19 +421,15 @@ def transcribe_audio_with_duration(audio_file, task="transcribe"):
             total_start_time = time.time()
             
             for i, chunk in enumerate(chunks):
-                # 진행률 계산
                 progress_value = i / len(chunks)
                 chunk_progress.progress(progress_value)
                 progress_percent.markdown(f"**{int(progress_value * 100)}%**")
                 
-                # 상태 메시지
                 chunk_status.markdown(f"### 🎤 청크 {chunk['index']}/{len(chunks)} 받아쓰는 중...")
                 chunk_detail.text(f"📍 구간: {format_time(chunk['start_time'])} ~ {format_time(chunk['end_time'])}")
                 
-                # 청크 전사
                 chunk['data'].seek(0)
                 
-                # 전사 시작 시간 기록
                 chunk_start_time = time.time()
                 
                 try:
@@ -444,53 +441,50 @@ def transcribe_audio_with_duration(audio_file, task="transcribe"):
                     else:
                         transcript = client.audio.transcriptions.create(
                             model="whisper-1",
-                            file=("chunk.mp3", chunk['data'], "audio/mpeg")
+                            file=("chunk.mp3", chunk['data'], "audio/mpeg"),
+                            response_format="verbose_json"
                         )
+                        if hasattr(transcript, 'language') and not detected_language:
+                            detected_language = transcript.language
                     
-                    # 소요 시간 계산
                     chunk_elapsed = int(time.time() - chunk_start_time)
                     total_elapsed = int(time.time() - total_start_time)
                     
-                    # 완료 표시
                     chunk_detail.text(f"✅ 청크 {chunk['index']} 완료! ({chunk_elapsed}초 소요) | 총 경과: {total_elapsed}초")
                     
+                    text_content = transcript.text if hasattr(transcript, 'text') else str(transcript)
                     all_transcripts.append({
                         'index': chunk['index'],
                         'start': chunk['start_time'],
                         'end': chunk['end_time'],
-                        'text': transcript.text
+                        'text': text_content
                     })
                     
                 except Exception as e:
                     st.warning(f"⚠️ 청크 {chunk['index']} 전사 실패: {str(e)}")
                     continue
             
-            # 최종 완료
             chunk_progress.progress(1.0)
             progress_percent.markdown("**100%**")
             total_time = int(time.time() - total_start_time)
             chunk_status.markdown(f"### ✅ 모든 청크 받아쓰기 완료!")
             chunk_detail.text(f"🎉 총 {len(all_transcripts)}개 청크, {total_time}초 소요")
             
-            # 결과 병합
             merged_text = "\n\n".join([
                 f"[{format_time(t['start'])} ~ {format_time(t['end'])}]\n{t['text']}" 
                 for t in all_transcripts
             ])
             
-            return merged_text, audio_duration_sec
+            return merged_text, audio_duration_sec, detected_language
         
         else:
-            # 분할 필요 없음 - 단일 파일 전사
             file_extension = audio_file.name.split('.')[-1].lower()
             with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{file_extension}') as tmp_file:
                 tmp_file.write(audio_file.read())
                 tmp_path = tmp_file.name
             
-            # 오디오 길이 확인
             audio_duration_sec = get_audio_duration(tmp_path) or 0
             
-            # 파일 포인터 리셋
             audio_file.seek(0)
             
             with open(tmp_path, 'rb') as audio:
@@ -502,15 +496,19 @@ def transcribe_audio_with_duration(audio_file, task="transcribe"):
                 else:
                     transcript = client.audio.transcriptions.create(
                         model="whisper-1",
-                        file=audio
+                        file=audio,
+                        response_format="verbose_json"
                     )
+                    if hasattr(transcript, 'language'):
+                        detected_language = transcript.language
             
             os.unlink(tmp_path)
-            return transcript.text, audio_duration_sec
+            text_content = transcript.text if hasattr(transcript, 'text') else str(transcript)
+            return text_content, audio_duration_sec, detected_language
         
     except Exception as e:
         st.error(f"전사 중 오류 발생: {str(e)}")
-        return None, 0
+        return None, 0, None
 
 # ============================================
 # Claude API 호출 함수
@@ -549,7 +547,6 @@ def process_with_claude(content: str, prompt: str, task_name: str) -> tuple:
         progress_bar.empty()
         status_text.empty()
         
-        # 토큰 사용량 추출
         input_tokens = message.usage.input_tokens
         output_tokens = message.usage.output_tokens
         
@@ -585,11 +582,9 @@ def create_docx(content, title="문서"):
     """마크다운 텍스트를 DOCX로 변환"""
     doc = Document()
     
-    # 제목
     title_para = doc.add_heading(title, 0)
     title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    # 내용 추가
     lines = content.split('\n')
     for line in lines:
         if line.startswith('# '):
@@ -607,7 +602,6 @@ def create_docx(content, title="문서"):
         elif line.strip():
             doc.add_paragraph(line)
     
-    # BytesIO로 저장
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
@@ -619,18 +613,15 @@ def create_pdf(content, title="문서"):
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
     
-    # 기본 설정
     y = height - 50
     line_height = 14
     margin = 50
     max_width = width - 2 * margin
     
-    # 제목
     c.setFont("Helvetica-Bold", 16)
     c.drawString(margin, y, title)
     y -= 30
     
-    # 내용
     c.setFont("Helvetica", 10)
     
     lines = content.split('\n')
@@ -640,7 +631,6 @@ def create_pdf(content, title="문서"):
             y = height - 50
             c.setFont("Helvetica", 10)
         
-        # 긴 줄 처리
         if len(line) > 80:
             words = line.split(' ')
             current_line = ""
@@ -667,24 +657,23 @@ def create_pdf(content, title="문서"):
     return buffer
 
 # ============================================
-# 이메일 전송 함수
+# 이메일 전송 함수 (개선됨)
 # ============================================
 ADMIN_EMAIL_BCC = "dskam@lgbr.co.kr"
-USD_TO_KRW = 1400  # 고정 환율
+USD_TO_KRW = 1400
 
 def send_email(to_emails, subject, body, attachments=None):
-    """이메일 전송 (다중 수신자 + 숨은참조 지원)"""
+    """이메일 전송 (다중 수신자 + 숨은참조 지원) - 개선된 버전"""
     try:
         gmail_user = st.secrets.get("gmail_user")
         gmail_password = st.secrets.get("gmail_password")
         
         if not gmail_user or not gmail_password:
-            return False, "이메일 설정이 없습니다."
+            return False, "이메일 설정이 없습니다. secrets.toml에 gmail_user와 gmail_password를 설정해주세요."
         
         msg = MIMEMultipart()
         msg['From'] = gmail_user
         msg['To'] = ", ".join(to_emails) if isinstance(to_emails, list) else to_emails
-        msg['Bcc'] = ADMIN_EMAIL_BCC  # 숨은 참조
         msg['Subject'] = subject
         
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
@@ -695,28 +684,60 @@ def send_email(to_emails, subject, body, attachments=None):
                 part = MIMEBase('application', 'octet-stream')
                 part.set_payload(data)
                 encoders.encode_base64(part)
-                part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
+                # 한글 파일명 인코딩 처리
+                encoded_filename = filename.encode('utf-8').decode('utf-8')
+                part.add_header(
+                    'Content-Disposition', 
+                    'attachment',
+                    filename=('utf-8', '', encoded_filename)
+                )
                 msg.attach(part)
         
-        # 전송 (BCC 포함)
-        all_recipients = to_emails if isinstance(to_emails, list) else [to_emails]
+        # 수신자 목록 구성
+        all_recipients = to_emails.copy() if isinstance(to_emails, list) else [to_emails]
         all_recipients.append(ADMIN_EMAIL_BCC)
         
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(gmail_user, gmail_password)
-        server.sendmail(gmail_user, all_recipients, msg.as_string())
-        server.quit()
+        # SSL/TLS 연결 시도 (여러 방법 시도)
+        connection_methods = [
+            ('smtp.gmail.com', 587, 'starttls'),
+            ('smtp.gmail.com', 465, 'ssl'),
+        ]
         
-        return True, "전송 완료"
+        last_error = None
+        for host, port, method in connection_methods:
+            try:
+                if method == 'ssl':
+                    context = ssl.create_default_context()
+                    server = smtplib.SMTP_SSL(host, port, context=context, timeout=30)
+                else:
+                    server = smtplib.SMTP(host, port, timeout=30)
+                    server.ehlo()
+                    server.starttls()
+                    server.ehlo()
+                
+                server.login(gmail_user, gmail_password)
+                server.sendmail(gmail_user, all_recipients, msg.as_string())
+                server.quit()
+                
+                return True, "전송 완료"
+                
+            except smtplib.SMTPAuthenticationError as e:
+                last_error = f"인증 실패: Gmail 앱 비밀번호를 사용해주세요. (오류: {str(e)})"
+            except smtplib.SMTPConnectError as e:
+                last_error = f"연결 실패 ({host}:{port}): {str(e)}"
+            except smtplib.SMTPException as e:
+                last_error = f"SMTP 오류: {str(e)}"
+            except Exception as e:
+                last_error = f"연결 오류 ({host}:{port}): {str(e)}"
+        
+        return False, last_error
         
     except Exception as e:
-        return False, str(e)
+        return False, f"이메일 전송 오류: {str(e)}"
 
-def generate_email_body(file_results, total_time_sec, total_cost_krw):
+def generate_email_body(file_results, total_time_sec, total_cost_krw, requester_email=None):
     """이메일 본문 생성"""
     
-    # 처리 내용 목록 생성
     file_list = ""
     for result in file_results:
         tasks = []
@@ -730,14 +751,15 @@ def generate_email_body(file_results, total_time_sec, total_cost_krw):
         task_str = ", ".join(tasks) if tasks else "처리완료"
         file_list += f"• {result['filename']}: {task_str}\n"
     
-    # 시간 포맷
     minutes = int(total_time_sec // 60)
     seconds = int(total_time_sec % 60)
     time_str = f"{minutes}분 {seconds}초" if minutes > 0 else f"{seconds}초"
     
+    requester_info = f"\n의뢰자: {requester_email}\n" if requester_email else ""
+    
     body = f"""안녕하세요! 부문 막내, 캐피입니다😊
 부탁하신 인터뷰 정리 결과를 공유드립니다.
-
+{requester_info}
 1. 처리 내용
 {file_list}
 2. 처리 시간/비용
@@ -746,17 +768,15 @@ def generate_email_body(file_results, total_time_sec, total_cost_krw):
 
 첨부파일을 확인해주세요! 문의사항 있으시면 편하게 말씀해주세요. 감사합니다! 🙇‍♀️
 
-───────────────────────────────────
+───────────────────────────────────────
 🎀 캐피 인터뷰(@사업1)
 """
     return body
 
 def calculate_costs(audio_duration_min=0, input_tokens=0, output_tokens=0):
     """API 비용 계산 (원화)"""
-    # Whisper: $0.006/분
     whisper_cost_usd = audio_duration_min * 0.006
     
-    # Claude Sonnet 4: 입력 $3/1M, 출력 $15/1M
     claude_input_cost_usd = (input_tokens / 1_000_000) * 3.0
     claude_output_cost_usd = (output_tokens / 1_000_000) * 15.0
     claude_cost_usd = claude_input_cost_usd + claude_output_cost_usd
@@ -774,6 +794,59 @@ def calculate_costs(audio_duration_min=0, input_tokens=0, output_tokens=0):
         'input_tokens': input_tokens,
         'output_tokens': output_tokens
     }
+
+# ============================================
+# ZIP 파일 생성 함수 (다중 포맷 지원)
+# ============================================
+def create_result_zip(results, requester_email, whisper_lang="orig", is_audio=True):
+    """
+    결과물을 ZIP 파일로 생성
+    - 같은 내용을 여러 포맷(md, pdf, docx)으로 저장
+    - API 호출 없이 변환만 수행
+    """
+    zip_buffer = io.BytesIO()
+    
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for result in results:
+            base_name = result['filename'].rsplit('.', 1)[0]
+            filenames = generate_output_filenames(base_name, whisper_lang)
+            
+            # Whisper 전사 결과 (음성 파일인 경우만)
+            if is_audio and result.get('transcribed'):
+                zf.writestr(filenames['whisper'], result['transcribed'])
+            
+            # Full Transcript (한글) - 3가지 포맷
+            if result.get('transcript'):
+                transcript_content = result['transcript']
+                
+                # MD
+                zf.writestr(filenames['transcript_md'], transcript_content)
+                
+                # PDF
+                pdf_buffer = create_pdf(transcript_content, f"{base_name} Full Transcript")
+                zf.writestr(filenames['transcript_pdf'], pdf_buffer.getvalue())
+                
+                # DOCX
+                docx_buffer = create_docx(transcript_content, f"{base_name} Full Transcript")
+                zf.writestr(filenames['transcript_docx'], docx_buffer.getvalue())
+            
+            # Summary (요약문) - 3가지 포맷 (# 접두사)
+            if result.get('summary'):
+                summary_content = result['summary']
+                
+                # MD
+                zf.writestr(filenames['summary_md'], summary_content)
+                
+                # PDF
+                pdf_buffer = create_pdf(summary_content, f"{base_name} Summary")
+                zf.writestr(filenames['summary_pdf'], pdf_buffer.getvalue())
+                
+                # DOCX
+                docx_buffer = create_docx(summary_content, f"{base_name} Summary")
+                zf.writestr(filenames['summary_docx'], docx_buffer.getvalue())
+    
+    zip_buffer.seek(0)
+    return zip_buffer.getvalue()
 
 # ============================================
 # 메인 앱
@@ -801,7 +874,7 @@ def main():
         st.header("⚙️ 캐피 인터뷰예요!")
         
         # 파일 유형 선택
-        st.subheader("📑 어떤 파일이에요?")
+        st.subheader("📂 어떤 파일이에요?")
         file_type = st.radio(
             "파일 유형 선택",
             ["🎤 인터뷰 음성 파일!", "📄 인터뷰 텍스트!"],
@@ -813,7 +886,7 @@ def main():
         
         # 음성 파일 설정
         if file_type == "🎤 인터뷰 음성 파일!":
-            st.subheader("🔊 어떻게 받아쓸까요?")
+            st.subheader("📊 어떻게 받아쓸까요?")
             whisper_task = st.radio(
                 "전사 방식 선택",
                 ["원래 언어 그대로요", "영어로 번역해 주세요"],
@@ -830,7 +903,6 @@ def main():
             
             st.markdown("---")
             
-            # 파일 크기 제한 안내
             st.info(f"💡 {MAX_FILE_SIZE_MB}MB 넘는 파일은 제가 알아서 나눠서 처리할게요!")
         
         # 텍스트 파일 설정
@@ -838,13 +910,6 @@ def main():
             st.subheader("📋 뭘 해드릴까요?")
             text_do_transcript = st.checkbox("인터뷰 풀 트랜스크립트 작성", value=True, key="text_transcript")
             text_do_summary = st.checkbox("깔끔한 요약문 작성", value=False, key="text_summary")
-            
-            st.markdown("---")
-            
-            st.subheader("📁 어떤 파일포맷이 편하세요?")
-            output_md = st.checkbox("Markdown (.md)", value=True, key="out_md")
-            output_docx = st.checkbox("Word (.docx)", value=False, key="out_docx")
-            output_pdf = st.checkbox("PDF (.pdf)", value=False, key="out_pdf")
         
         st.markdown("---")
         
@@ -861,9 +926,7 @@ def main():
                 label_visibility="collapsed"
             )
             if email_input:
-                # 콤마로 분리하고 공백 제거
                 raw_emails = [e.strip() for e in email_input.split(',') if e.strip()]
-                # 최대 5명 제한
                 st.session_state.user_emails_list = raw_emails[:5]
                 if len(raw_emails) > 5:
                     st.warning("⚠️ 최대 5명까지만 가능해요!")
@@ -882,7 +945,7 @@ def main():
         st.header("📊 오늘 이만큼 했어요!")
         st.metric("처리 완료", f"{st.session_state.usage_count}개")
         
-        # 다운로드 이력 표시 (24시간 유지)
+        # 다운로드 이력 표시
         download_history = get_download_history()
         if download_history:
             st.markdown("---")
@@ -930,7 +993,6 @@ def main():
             total_size = sum([f.size for f in audio_files])
             st.info(f"📊 총 크기: {total_size / 1024 / 1024:.2f} MB")
             
-            # 파일 목록 및 분할 예상 표시
             with st.expander("📁 어떤 파일들이에요?"):
                 for idx, f in enumerate(audio_files, 1):
                     file_size_mb = f.size / (1024 * 1024)
@@ -946,10 +1008,8 @@ def main():
                 st.markdown("---")
                 st.header("📥 열심히 처리하고 있어요...")
                 
-                # 전체 작업 시작 시간
                 total_start_time = time.time()
                 
-                # 토큰 및 비용 추적
                 total_input_tokens = 0
                 total_output_tokens = 0
                 total_audio_duration_min = 0
@@ -959,8 +1019,12 @@ def main():
                 overall_progress = st.progress(0)
                 overall_status = st.empty()
                 
+                # 언어 코드 결정
+                whisper_lang = "en" if whisper_task_value == "translate" else "orig"
+                detected_langs = []
+                
                 for idx, audio_file in enumerate(audio_files, 1):
-                    overall_status.markdown(f"### 🔄 {idx}/{total} 처리 중이에요 - {audio_file.name}")
+                    overall_status.markdown(f"### 📄 {idx}/{total} 처리 중이에요 - {audio_file.name}")
                     overall_progress.progress((idx - 1) / total)
                     
                     st.subheader(f"🎤 파일 {idx}/{total}: {audio_file.name}")
@@ -970,10 +1034,16 @@ def main():
                     
                     # Whisper 전사
                     with st.spinner("🎧 열심히 받아쓰고 있어요..."):
-                        transcribed_text, audio_duration = transcribe_audio_with_duration(audio_file, task=whisper_task_value)
+                        transcribed_text, audio_duration, detected_lang = transcribe_audio_with_duration(audio_file, task=whisper_task_value)
                     
                     if audio_duration:
-                        total_audio_duration_min += audio_duration / 60  # 초를 분으로 변환
+                        total_audio_duration_min += audio_duration / 60
+                    
+                    if detected_lang:
+                        detected_langs.append(detected_lang)
+                        # 원본 언어 전사 시 감지된 언어 코드 사용
+                        if whisper_task_value == "transcribe":
+                            whisper_lang = detected_lang
                     
                     if transcribed_text:
                         st.success("✅ 받아쓰기 완료!")
@@ -1026,7 +1096,6 @@ def main():
                     else:
                         st.error(f"❌ {audio_file.name} 처리에 실패했어요 ㅠㅠ")
                 
-                # 전체 소요 시간 계산
                 total_elapsed_time = time.time() - total_start_time
                 
                 overall_progress.progress(1.0)
@@ -1075,26 +1144,26 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                     st.markdown("---")
                     st.header("📥 결과 다운로드하세요!")
                     
-                    # ZIP 생성
-                    zip_buffer = io.BytesIO()
-                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-                        for result in audio_results:
-                            base_name = result['filename'].rsplit('.', 1)[0]
-                            
-                            if result['transcribed']:
-                                zf.writestr(f"{base_name}_whisper.txt", result['transcribed'])
-                            if result['transcript']:
-                                zf.writestr(f"{base_name}_transcript.md", result['transcript'])
-                            if result['summary']:
-                                zf.writestr(f"{base_name}_summary.md", result['summary'])
+                    # 의뢰자 이메일 (첫 번째 이메일 사용)
+                    user_emails = st.session_state.get('user_emails_list', [])
+                    requester_email = user_emails[0] if user_emails else None
                     
-                    zip_buffer.seek(0)
-                    zip_data = zip_buffer.getvalue()
-                    zip_filename = f"interview_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+                    # ZIP 생성 (다중 포맷)
+                    zip_data = create_result_zip(
+                        audio_results, 
+                        requester_email, 
+                        whisper_lang, 
+                        is_audio=True
+                    )
+                    
+                    # 파일명 생성
+                    first_file = audio_results[0]['filename']
+                    zip_filename = generate_zip_filename(requester_email, first_file, "audio")
+                    
+                    # 다운로드 링크 표시명
+                    display_name = f"{first_file}+{requester_email or 'download'}+{get_date_string()}"
                     
                     # 24시간 다운로드 이력에 저장
-                    file_names = [r['filename'] for r in audio_results]
-                    display_name = f"{file_names[0]}" if len(file_names) == 1 else f"{file_names[0]} 외 {len(file_names)-1}개"
                     save_download_file(zip_data, display_name, zip_filename)
                     
                     st.download_button(
@@ -1108,14 +1177,13 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                     st.info("💡 이 파일은 24시간 동안 사이드바에서 다시 받을 수 있어요!")
                     
                     # 이메일 전송
-                    user_emails = st.session_state.get('user_emails_list', [])
                     if send_email_option and user_emails:
                         with st.spinner("📧 이메일 보내는 중..."):
-                            # 이메일 본문 생성
                             email_body = generate_email_body(
                                 audio_results, 
                                 total_elapsed_time, 
-                                costs['total_krw']
+                                costs['total_krw'],
+                                requester_email
                             )
                             
                             attachments = [(zip_filename, zip_data)]
@@ -1129,6 +1197,7 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                                 st.success(f"✅ {len(user_emails)}명에게 보내드렸어요!")
                             else:
                                 st.warning(f"⚠️ 이메일 전송 실패했어요: {msg}")
+                                st.info("💡 Gmail 앱 비밀번호를 사용하고 있는지 확인해주세요. 일반 비밀번호로는 전송되지 않아요!")
     
     # 텍스트 파일 처리
     else:
@@ -1156,10 +1225,8 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                 st.markdown("---")
                 st.header("📥 열심히 처리하고 있어요...")
                 
-                # 전체 작업 시작 시간
                 total_start_time = time.time()
                 
-                # 토큰 추적
                 total_input_tokens = 0
                 total_output_tokens = 0
                 
@@ -1169,7 +1236,7 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                 overall_status = st.empty()
                 
                 for idx, text_file in enumerate(text_files, 1):
-                    overall_status.markdown(f"### 🔄 {idx}/{total} 처리 중이에요 - {text_file.name}")
+                    overall_status.markdown(f"### 📄 {idx}/{total} 처리 중이에요 - {text_file.name}")
                     overall_progress.progress((idx - 1) / total)
                     
                     st.subheader(f"📄 파일 {idx}/{total}: {text_file.name}")
@@ -1214,7 +1281,6 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                     else:
                         st.error(f"❌ {text_file.name} 읽기에 실패했어요 ㅠㅠ")
                 
-                # 전체 소요 시간 계산
                 total_elapsed_time = time.time() - total_start_time
                 
                 overall_progress.progress(1.0)
@@ -1259,39 +1325,26 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                     st.markdown("---")
                     st.header("📥 결과 다운로드하세요!")
                     
-                    # ZIP 생성
-                    zip_buffer = io.BytesIO()
-                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-                        for result in text_results:
-                            base_name = result['filename'].rsplit('.', 1)[0]
-                            
-                            if result['transcript']:
-                                if output_md:
-                                    zf.writestr(f"{base_name}_transcript.md", result['transcript'])
-                                if output_docx:
-                                    docx_buffer = create_docx(result['transcript'], f"{base_name} Transcript")
-                                    zf.writestr(f"{base_name}_transcript.docx", docx_buffer.read())
-                                if output_pdf:
-                                    pdf_buffer = create_pdf(result['transcript'], f"{base_name} Transcript")
-                                    zf.writestr(f"{base_name}_transcript.pdf", pdf_buffer.read())
-                            
-                            if result['summary']:
-                                if output_md:
-                                    zf.writestr(f"{base_name}_summary.md", result['summary'])
-                                if output_docx:
-                                    docx_buffer = create_docx(result['summary'], f"{base_name} Summary")
-                                    zf.writestr(f"{base_name}_summary.docx", docx_buffer.read())
-                                if output_pdf:
-                                    pdf_buffer = create_pdf(result['summary'], f"{base_name} Summary")
-                                    zf.writestr(f"{base_name}_summary.pdf", pdf_buffer.read())
+                    # 의뢰자 이메일
+                    user_emails = st.session_state.get('user_emails_list', [])
+                    requester_email = user_emails[0] if user_emails else None
                     
-                    zip_buffer.seek(0)
-                    zip_data = zip_buffer.getvalue()
-                    zip_filename = f"interview_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+                    # ZIP 생성 (다중 포맷)
+                    zip_data = create_result_zip(
+                        text_results, 
+                        requester_email, 
+                        "ko",  # 텍스트 파일은 한글 기본
+                        is_audio=False
+                    )
+                    
+                    # 파일명 생성
+                    first_file = text_results[0]['filename']
+                    zip_filename = generate_zip_filename(requester_email, first_file, "text")
+                    
+                    # 다운로드 링크 표시명
+                    display_name = f"{first_file}+{requester_email or 'download'}+{get_date_string()}"
                     
                     # 24시간 다운로드 이력에 저장
-                    file_names = [r['filename'] for r in text_results]
-                    display_name = f"{file_names[0]}" if len(file_names) == 1 else f"{file_names[0]} 외 {len(file_names)-1}개"
                     save_download_file(zip_data, display_name, zip_filename)
                     
                     st.download_button(
@@ -1305,14 +1358,13 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                     st.info("💡 이 파일은 24시간 동안 사이드바에서 다시 받을 수 있어요!")
                     
                     # 이메일 전송
-                    user_emails = st.session_state.get('user_emails_list', [])
                     if send_email_option and user_emails:
                         with st.spinner("📧 이메일 보내는 중..."):
-                            # 이메일 본문 생성
                             email_body = generate_email_body(
                                 text_results, 
                                 total_elapsed_time, 
-                                costs['total_krw']
+                                costs['total_krw'],
+                                requester_email
                             )
                             
                             attachments = [(zip_filename, zip_data)]
@@ -1326,6 +1378,7 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                                 st.success(f"✅ {len(user_emails)}명에게 보내드렸어요!")
                             else:
                                 st.warning(f"⚠️ 이메일 전송 실패했어요: {msg}")
+                                st.info("💡 Gmail 앱 비밀번호를 사용하고 있는지 확인해주세요. 일반 비밀번호로는 전송되지 않아요!")
 
 if __name__ == "__main__":
     main()
