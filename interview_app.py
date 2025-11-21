@@ -141,6 +141,51 @@ ADMIN_EMAIL_BCC = "dskam@lgbr.co.kr"
 USD_TO_KRW = 1400
 
 # ============================================
+# 프롬프트 로드 함수
+# ============================================
+def load_prompts():
+    """프로젝트 파일에서 프롬프트 로드"""
+    transcript_prompt = None
+    summary_prompt = None
+    
+    try:
+        # Full 트랜스크립트 프롬프트 읽기
+        transcript_file = '/mnt/project/_Full_트랜스크립트_작성_프롬프트_v2_0.txt'
+        if os.path.exists(transcript_file):
+            with open(transcript_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+                # TRANSCRIPT_PROMPT_KO = """ 부분 찾아서 추출
+                if 'TRANSCRIPT_PROMPT_KO = """' in content:
+                    start = content.find('TRANSCRIPT_PROMPT_KO = """') + len('TRANSCRIPT_PROMPT_KO = """')
+                    end = content.find('"""', start)
+                    transcript_prompt = content[start:end].strip()
+        
+        # 인터뷰 요약문 프롬프트 읽기
+        summary_file = '/mnt/project/_인터뷰_요약문_작성_프롬프트_v4_0.txt'
+        if os.path.exists(summary_file):
+            with open(summary_file, 'r', encoding='utf-8') as f:
+                summary_prompt = f.read().strip()
+                # 첫 줄이 제목인 경우 제거
+                if summary_prompt.startswith('# '):
+                    lines = summary_prompt.split('\n')
+                    summary_prompt = '\n'.join(lines[1:]).strip()
+    
+    except Exception as e:
+        st.warning(f"프로젝트 파일 읽기 실패: {e}")
+    
+    # 프로젝트 파일에서 못 읽으면 secrets에서 시도
+    if not transcript_prompt or not summary_prompt:
+        try:
+            if not transcript_prompt:
+                transcript_prompt = st.secrets.get("transcript_prompt", "")
+            if not summary_prompt:
+                summary_prompt = st.secrets.get("summary_prompt", "")
+        except:
+            pass
+    
+    return transcript_prompt, summary_prompt
+
+# ============================================
 # 사용량 관리
 # ============================================
 def get_daily_usage():
@@ -695,12 +740,12 @@ def main():
         st.markdown("인터뷰를 정리하는 캐피입니다. 음원/텍스트를 올려주세요! 📎")
     
     # 프롬프트 로드
-    try:
-        transcript_prompt = st.secrets.get("transcript_prompt", "")
-        summary_prompt = st.secrets.get("summary_prompt", "")
-    except:
-        transcript_prompt = ""
-        summary_prompt = ""
+    transcript_prompt, summary_prompt = load_prompts()
+    
+    # 프롬프트가 없으면 경고
+    if not transcript_prompt and not summary_prompt:
+        st.error("⚠️ 프롬프트가 설정되지 않았습니다. 관리자에게 문의하세요.")
+        return
     
     st.markdown("---")
     
@@ -805,6 +850,8 @@ def main():
                         st.session_state.proc_out_txt = out_txt
                         st.session_state.proc_emails = emails
                         st.session_state.proc_stt_model = stt_model
+                        st.session_state.proc_transcript_prompt = transcript_prompt
+                        st.session_state.proc_summary_prompt = summary_prompt
                         st.rerun()
     
     # ========== 진행 UI ==========
@@ -819,6 +866,8 @@ def main():
         out_txt = st.session_state.proc_out_txt
         emails = st.session_state.proc_emails
         stt_model = st.session_state.get('proc_stt_model', 'whisper-1')
+        transcript_prompt = st.session_state.get('proc_transcript_prompt')
+        summary_prompt = st.session_state.get('proc_summary_prompt')
         
         # 진행 단계 정의
         if is_audio:
