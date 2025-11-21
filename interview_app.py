@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import streamlit as st
 import anthropic
 import openai
@@ -17,7 +20,7 @@ import json
 import re
 import urllib.request
 
-# ë¬¸ì„œ ìƒì„±ìš©
+# 문서 생성용
 from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -27,19 +30,19 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 import markdown
 
-# íŽ˜ì´ì§€ ì„¤ì •
+# 페이지 설정
 st.set_page_config(
-    page_title="ìºí”¼ ì¸í„°ë·°",
-    page_icon="ðŸŽ€",
+    page_title="캐피 인터뷰",
+    page_icon="🎀",
     layout="wide"
 )
 
 # ============================================
-# ëª¨ë°”ì¼ ìµœì í™” CSS
+# 모바일 최적화 CSS
 # ============================================
 st.markdown("""
 <style>
-/* ëª¨ë°”ì¼ ë°˜ì‘í˜• CSS */
+/* 모바일 반응형 CSS */
 @media (max-width: 768px) {
     .stApp {
         padding: 0.5rem;
@@ -52,7 +55,7 @@ st.markdown("""
     }
     
     .stTextArea textarea {
-        font-size: 16px !important; /* iOS í™•ëŒ€ ë°©ì§€ */
+        font-size: 16px !important; /* iOS 확대 방지 */
     }
     
     .stTextInput input {
@@ -83,7 +86,7 @@ st.markdown("""
         font-size: 1.2rem;
     }
     
-    /* ì‚¬ì´ë“œë°” ëª¨ë°”ì¼ ìµœì í™” */
+    /* 사이드바 모바일 최적화 */
     section[data-testid="stSidebar"] {
         width: 100% !important;
     }
@@ -92,7 +95,7 @@ st.markdown("""
         padding: 1rem;
     }
     
-    /* íŒŒì¼ ì—…ë¡œë” í„°ì¹˜ ì˜ì—­ í™•ëŒ€ */
+    /* 파일 업로더 터치 영역 확대 */
     .stFileUploader {
         padding: 1rem;
     }
@@ -101,24 +104,24 @@ st.markdown("""
         font-size: 0.9rem;
     }
     
-    /* ì²´í¬ë°•ìŠ¤ í„°ì¹˜ ì˜ì—­ í™•ëŒ€ */
+    /* 체크박스 터치 영역 확대 */
     .stCheckbox {
         padding: 0.5rem 0;
     }
     
-    /* ì§„í–‰ë°” */
+    /* 진행바 */
     .stProgress > div {
         height: 8px;
     }
 }
 
-/* ì „ì²´ í™”ë©´ ìŠ¤íƒ€ì¼ */
+/* 전체 화면 스타일 */
 .main .block-container {
     max-width: 100%;
     padding: 1rem;
 }
 
-/* ë‹¤ìš´ë¡œë“œ ë²„íŠ¼ ê°•ì¡° */
+/* 다운로드 버튼 강조 */
 .stDownloadButton > button {
     background-color: #4CAF50;
     color: white;
@@ -132,7 +135,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================
-# í•œê¸€ í°íŠ¸ ì„¤ì • (PDFìš©) - ë‚˜ëˆ”ê³ ë”•
+# 한글 폰트 설정 (PDF용) - 나눔고딕
 # ============================================
 FONT_DIR = "/tmp/fonts"
 KOREAN_FONT_PATH = os.path.join(FONT_DIR, "NanumGothic.ttf")
@@ -140,7 +143,7 @@ KOREAN_FONT_BOLD_PATH = os.path.join(FONT_DIR, "NanumGothicBold.ttf")
 KOREAN_FONT_REGISTERED = False
 
 def setup_korean_font():
-    """ë‚˜ëˆ”ê³ ë”• í°íŠ¸ ë‹¤ìš´ë¡œë“œ ë° ë“±ë¡"""
+    """나눔고딕 폰트 다운로드 및 등록"""
     global KOREAN_FONT_REGISTERED
     
     if KOREAN_FONT_REGISTERED:
@@ -169,11 +172,11 @@ def setup_korean_font():
         return True
         
     except Exception as e:
-        print(f"í°íŠ¸ ì„¤ì • ì˜¤ë¥˜: {e}")
+        print(f"폰트 설정 오류: {e}")
         return False
 
 # ============================================
-# ë‹¤ìš´ë¡œë“œ íŒŒì¼ ì €ìž¥ ì‹œìŠ¤í…œ (24ì‹œê°„ ìœ ì§€)
+# 다운로드 파일 저장 시스템 (24시간 유지)
 # ============================================
 DOWNLOAD_DIR = "/tmp/cappy_downloads"
 METADATA_FILE = "/tmp/cappy_downloads/metadata.json"
@@ -277,7 +280,7 @@ def get_download_history():
                     remaining = expiry_time - current_time
                     hours_left = int(remaining.total_seconds() // 3600)
                     minutes_left = int((remaining.total_seconds() % 3600) // 60)
-                    item['remaining'] = f"{hours_left}ì‹œê°„ {minutes_left}ë¶„"
+                    item['remaining'] = f"{hours_left}시간 {minutes_left}분"
                     valid_items.append(item)
             except Exception:
                 continue
@@ -297,14 +300,14 @@ def get_download_file(file_id):
     except Exception:
         return None
 
-# ì„¸ì…˜ ìƒíƒœ ì´ˆê¸°í™”
+# 세션 상태 초기화
 if 'usage_count' not in st.session_state:
     st.session_state.usage_count = 0
 if 'active_tab' not in st.session_state:
     st.session_state.active_tab = "audio"
 
 # ============================================
-# íŒŒì¼ ë¶„í•  ê¸°ëŠ¥ (20MB ë‹¨ìœ„)
+# 파일 분할 기능 (20MB 단위)
 # ============================================
 MAX_FILE_SIZE_MB = 20
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
@@ -319,7 +322,7 @@ def get_audio_duration(file_path):
         info = json.loads(result.stdout)
         return float(info['format']['duration'])
     except Exception as e:
-        st.warning(f"ì˜¤ë””ì˜¤ ê¸¸ì´ í™•ì¸ ì‹¤íŒ¨: {e}")
+        st.warning(f"오디오 길이 확인 실패: {e}")
         return None
 
 def split_audio_with_ffmpeg(input_path, output_dir, chunk_duration_sec=600):
@@ -363,10 +366,10 @@ def split_audio_with_ffmpeg(input_path, output_dir, chunk_duration_sec=600):
         return chunks
         
     except subprocess.CalledProcessError as e:
-        st.error(f"ffmpeg ì˜¤ë¥˜: {e.stderr.decode() if e.stderr else str(e)}")
+        st.error(f"ffmpeg 오류: {e.stderr.decode() if e.stderr else str(e)}")
         return None
     except Exception as e:
-        st.error(f"ì˜¤ë””ì˜¤ ë¶„í•  ì˜¤ë¥˜: {str(e)}")
+        st.error(f"오디오 분할 오류: {str(e)}")
         return None
 
 def split_audio_file(audio_file, max_size_mb=20):
@@ -393,7 +396,7 @@ def split_audio_file(audio_file, max_size_mb=20):
         chunk_duration_sec = total_duration / num_chunks
         chunk_duration_sec = max(60, min(chunk_duration_sec, 1200))
         
-        st.info(f"ðŸ“Š ì´ ê¸¸ì´: {total_duration/60:.1f}ë¶„ â†’ {num_chunks}ê°œ ì²­í¬ë¡œ ë¶„í• ")
+        st.info(f"📊 총 길이: {total_duration/60:.1f}분 → {num_chunks}개 청크로 분할")
         
         chunks = split_audio_with_ffmpeg(input_path, temp_dir, chunk_duration_sec)
         
@@ -409,7 +412,7 @@ def split_audio_file(audio_file, max_size_mb=20):
         return chunks
         
     except Exception as e:
-        st.error(f"ì˜¤ë””ì˜¤ íŒŒì¼ ë¶„í•  ì¤‘ ì˜¤ë¥˜: {str(e)}")
+        st.error(f"오디오 파일 분할 중 오류: {str(e)}")
         return None
 
 def format_time(seconds):
@@ -418,7 +421,7 @@ def format_time(seconds):
     return f"{minutes:02d}:{secs:02d}"
 
 # ============================================
-# ë¹„ë°€ë²ˆí˜¸ ë³´í˜¸
+# 비밀번호 보호
 # ============================================
 def check_password():
     def password_entered():
@@ -430,27 +433,27 @@ def check_password():
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        st.markdown("## ðŸ” ì ‘ê·¼ ì œí•œ")
-        st.markdown("íŒ€ ë‚´ë¶€ìš© ì‹œìŠ¤í…œìž…ë‹ˆë‹¤.")
-        st.text_input("ë¹„ë°€ë²ˆí˜¸ë¥¼ ìž…ë ¥í•˜ì„¸ìš”:", type="password", on_change=password_entered, key="password")
+        st.markdown("## 🔐 접근 제한")
+        st.markdown("팀 내부용 시스템입니다.")
+        st.text_input("비밀번호를 입력하세요:", type="password", on_change=password_entered, key="password")
         return False
     
     elif not st.session_state["password_correct"]:
-        st.markdown("## ðŸ” ì ‘ê·¼ ì œí•œ")
-        st.text_input("ë¹„ë°€ë²ˆí˜¸ë¥¼ ìž…ë ¥í•˜ì„¸ìš”:", type="password", on_change=password_entered, key="password")
-        st.error("âŒ ë¹„ë°€ë²ˆí˜¸ê°€ ì˜¬ë°”ë¥´ì§€ ì•ŠìŠµë‹ˆë‹¤.")
+        st.markdown("## 🔐 접근 제한")
+        st.text_input("비밀번호를 입력하세요:", type="password", on_change=password_entered, key="password")
+        st.error("❌ 비밀번호가 올바르지 않습니다.")
         return False
     
     return True
 
 # ============================================
-# Whisper ì „ì‚¬ í•¨ìˆ˜
+# Whisper 전사 함수
 # ============================================
 def transcribe_audio_with_duration(audio_file, task="transcribe"):
     try:
         api_key = st.secrets.get("OPENAI_API_KEY")
         if not api_key:
-            st.error("âš ï¸ OpenAI API í‚¤ê°€ ì„¤ì •ë˜ì§€ ì•Šì•˜ìŠµë‹ˆë‹¤.")
+            st.error("⚠️ OpenAI API 키가 설정되지 않았습니다.")
             return None, 0
         
         client = openai.OpenAI(api_key=api_key)
@@ -458,19 +461,19 @@ def transcribe_audio_with_duration(audio_file, task="transcribe"):
         audio_duration_sec = 0
         
         if file_size_mb > MAX_FILE_SIZE_MB:
-            st.info(f"ðŸ“¦ íŒŒì¼ í¬ê¸°: {file_size_mb:.1f}MB - ìžë™ ë¶„í• í•©ë‹ˆë‹¤...")
+            st.info(f"📦 파일 크기: {file_size_mb:.1f}MB - 자동 분할합니다...")
             
-            with st.spinner("ðŸ”ª ì˜¤ë””ì˜¤ íŒŒì¼ ë¶„í•  ì¤‘..."):
+            with st.spinner("🔪 오디오 파일 분할 중..."):
                 chunks = split_audio_file(audio_file, MAX_FILE_SIZE_MB)
             
             if chunks is None:
-                st.error("íŒŒì¼ ë¶„í• ì— ì‹¤íŒ¨í–ˆìŠµë‹ˆë‹¤.")
+                st.error("파일 분할에 실패했습니다.")
                 return None, 0
             
             if chunks:
                 audio_duration_sec = chunks[-1]['end_time']
             
-            st.success(f"âœ… {len(chunks)}ê°œ ì²­í¬ë¡œ ë¶„í•  ì™„ë£Œ")
+            st.success(f"✅ {len(chunks)}개 청크로 분할 완료")
             
             all_transcripts = []
             
@@ -492,8 +495,8 @@ def transcribe_audio_with_duration(audio_file, task="transcribe"):
                 chunk_progress.progress(progress_value)
                 progress_percent.markdown(f"**{int(progress_value * 100)}%**")
                 
-                chunk_status.caption(f"ðŸŽ¤ ì²­í¬ {chunk['index']}/{len(chunks)} ì²˜ë¦¬ ì¤‘...")
-                chunk_detail.caption(f"êµ¬ê°„: {format_time(chunk['start_time'])} ~ {format_time(chunk['end_time'])}")
+                chunk_status.caption(f"🎤 청크 {chunk['index']}/{len(chunks)} 처리 중...")
+                chunk_detail.caption(f"구간: {format_time(chunk['start_time'])} ~ {format_time(chunk['end_time'])}")
                 
                 chunk['data'].seek(0)
                 chunk_start_time = time.time()
@@ -513,7 +516,7 @@ def transcribe_audio_with_duration(audio_file, task="transcribe"):
                     chunk_elapsed = int(time.time() - chunk_start_time)
                     total_elapsed = int(time.time() - total_start_time)
                     
-                    chunk_detail.caption(f"âœ… ì²­í¬ {chunk['index']} ì™„ë£Œ ({chunk_elapsed}ì´ˆ)")
+                    chunk_detail.caption(f"✅ 청크 {chunk['index']} 완료 ({chunk_elapsed}초)")
                     
                     all_transcripts.append({
                         'index': chunk['index'],
@@ -523,13 +526,13 @@ def transcribe_audio_with_duration(audio_file, task="transcribe"):
                     })
                     
                 except Exception as e:
-                    st.warning(f"âš ï¸ ì²­í¬ {chunk['index']} ì „ì‚¬ ì‹¤íŒ¨: {str(e)}")
+                    st.warning(f"⚠️ 청크 {chunk['index']} 전사 실패: {str(e)}")
                     continue
             
             chunk_progress.progress(1.0)
             progress_percent.markdown("**100%**")
             total_time = int(time.time() - total_start_time)
-            chunk_status.caption(f"âœ… ì „ì²´ ì™„ë£Œ ({total_time}ì´ˆ)")
+            chunk_status.caption(f"✅ 전체 완료 ({total_time}초)")
             chunk_detail.empty()
             
             merged_text = "\n\n".join([
@@ -564,17 +567,17 @@ def transcribe_audio_with_duration(audio_file, task="transcribe"):
             return transcript.text, audio_duration_sec
         
     except Exception as e:
-        st.error(f"ì „ì‚¬ ì¤‘ ì˜¤ë¥˜ ë°œìƒ: {str(e)}")
+        st.error(f"전사 중 오류 발생: {str(e)}")
         return None, 0
 
 # ============================================
-# Claude API í˜¸ì¶œ í•¨ìˆ˜
+# Claude API 호출 함수
 # ============================================
 def process_with_claude(content: str, prompt: str, task_name: str) -> tuple:
     try:
         api_key = st.secrets.get("ANTHROPIC_API_KEY")
         if not api_key:
-            st.error("âš ï¸ Anthropic API í‚¤ê°€ ì„¤ì •ë˜ì§€ ì•Šì•˜ìŠµë‹ˆë‹¤.")
+            st.error("⚠️ Anthropic API 키가 설정되지 않았습니다.")
             return None, 0, 0
         
         client = anthropic.Anthropic(api_key=api_key)
@@ -582,7 +585,7 @@ def process_with_claude(content: str, prompt: str, task_name: str) -> tuple:
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        status_text.caption(f"ðŸ¤– {task_name} ì²˜ë¦¬ ì¤‘...")
+        status_text.caption(f"🤖 {task_name} 처리 중...")
         progress_bar.progress(30)
         
         message = client.messages.create(
@@ -592,13 +595,13 @@ def process_with_claude(content: str, prompt: str, task_name: str) -> tuple:
             messages=[
                 {
                     "role": "user",
-                    "content": f"{prompt}\n\n# ì²˜ë¦¬í•  ì¸í„°ë·° ë‚´ìš©:\n\n{content}"
+                    "content": f"{prompt}\n\n# 처리할 인터뷰 내용:\n\n{content}"
                 }
             ]
         )
         
         progress_bar.progress(100)
-        status_text.caption(f"âœ… {task_name} ì™„ë£Œ")
+        status_text.caption(f"✅ {task_name} 완료")
         time.sleep(0.3)
         progress_bar.empty()
         status_text.empty()
@@ -609,11 +612,11 @@ def process_with_claude(content: str, prompt: str, task_name: str) -> tuple:
         return message.content[0].text, input_tokens, output_tokens
         
     except Exception as e:
-        st.error(f"âŒ ì²˜ë¦¬ ì¤‘ ì˜¤ë¥˜ ë°œìƒ: {str(e)}")
+        st.error(f"❌ 처리 중 오류 발생: {str(e)}")
         return None, 0, 0
 
 # ============================================
-# íŒŒì¼ ì½ê¸° í•¨ìˆ˜
+# 파일 읽기 함수
 # ============================================
 def read_file(uploaded_file):
     try:
@@ -627,11 +630,11 @@ def read_file(uploaded_file):
             uploaded_file.seek(0)
             return content
         except Exception as e:
-            st.error(f"íŒŒì¼ ì½ê¸° ì˜¤ë¥˜: {str(e)}")
+            st.error(f"파일 읽기 오류: {str(e)}")
             return None
 
 # ============================================
-# í—¤ë” ì¶”ì¶œ ë° ì¶”ê°€ í•¨ìˆ˜
+# 헤더 추출 및 추가 함수
 # ============================================
 def extract_header_from_transcript(transcript_text):
     header_info = {
@@ -651,12 +654,12 @@ def extract_header_from_transcript(transcript_text):
             title = title.replace(' Full Transcript', '').replace('Full Transcript', '').strip()
             header_info['title'] = title
         
-        if '**ì¼ì‹œ:**' in line or 'ì¼ì‹œ:' in line:
+        if '**일시:**' in line or '일시:' in line:
             date_match = re.search(r'[:\s]+(.+)$', line)
             if date_match:
                 header_info['date'] = date_match.group(1).strip().replace('**', '')
         
-        if '**ì°¸ì„ìž:**' in line or 'ì°¸ì„ìž:' in line:
+        if '**참석자:**' in line or '참석자:' in line:
             participants_match = re.search(r'[:\s]+(.+)$', line)
             if participants_match:
                 header_info['participants'] = participants_match.group(1).strip().replace('**', '')
@@ -664,13 +667,13 @@ def extract_header_from_transcript(transcript_text):
     return header_info
 
 def add_header_to_summary(summary_text, header_info):
-    """ìš”ì•½ë¬¸ì— í—¤ë” ì¶”ê°€ ë° ë§ˆí¬ë‹¤ìš´ í¬ë§· ì •ë¦¬"""
+    """요약문에 헤더 추가 및 마크다운 포맷 정리"""
     if not summary_text:
         return summary_text
     
-    # ì´ë¯¸ í—¤ë”ê°€ ìžˆëŠ”ì§€ í™•ì¸
+    # 이미 헤더가 있는지 확인
     if summary_text.strip().startswith('# '):
-        # ê¸°ì¡´ í—¤ë” í¬ë§· ì •ë¦¬
+        # 기존 헤더 포맷 정리
         return normalize_markdown_format(summary_text)
     
     header_lines = []
@@ -679,10 +682,10 @@ def add_header_to_summary(summary_text, header_info):
         header_lines.append(f"# {header_info['title']} Summary")
     
     if header_info['date']:
-        header_lines.append(f"**ì¼ì‹œ:** {header_info['date']}")
+        header_lines.append(f"**일시:** {header_info['date']}")
     
     if header_info['participants']:
-        header_lines.append(f"**ì°¸ì„ìž:** {header_info['participants']}")
+        header_lines.append(f"**참석자:** {header_info['participants']}")
     
     if header_lines:
         header_lines.append("")
@@ -695,7 +698,7 @@ def add_header_to_summary(summary_text, header_info):
     return normalize_markdown_format(summary_text)
 
 def normalize_markdown_format(text):
-    """ë§ˆí¬ë‹¤ìš´ í¬ë§· ì¼ê´€ì„± ìœ ì§€ - ì œëª© ê³„ì¸µ êµ¬ì¡° ì •ë¦¬"""
+    """마크다운 포맷 일관성 유지 - 제목 계층 구조 정리"""
     if not text:
         return text
     
@@ -703,10 +706,10 @@ def normalize_markdown_format(text):
     result_lines = []
     
     for line in lines:
-        # ## ë¡œ ì‹œìž‘í•˜ëŠ” ì„¹ì…˜ ì œëª©ì„ ### ë¡œ ë³€ê²½ (# ì´ ë¬¸ì„œ ì œëª©ì´ë¯€ë¡œ)
-        # ë‹¨, [ìš”ì•½], [í•µì‹¬í¬ì¸íŠ¸] ë“±ì˜ ì„¹ì…˜ êµ¬ë¶„ìžëŠ” ## ë¡œ ìœ ì§€
-        if line.startswith('## ') and not any(keyword in line for keyword in ['[ìš”ì•½]', '[í•µì‹¬í¬ì¸íŠ¸]', '[í•µì‹¬ í¬ì¸íŠ¸]', '[ìƒˆë¡­ê²Œ', '[ì¸í„°ë·°ì´ê°€', '[ë‹µì„', '[ê¸°ì—… ì‚¬ë¡€]', '[ìœ ë§', '[ì‹œì‚¬ì ]', '[í•µì‹¬ ì½”ë©˜íŠ¸]', '[ì£¼ìš” í†µê³„]', '[tags]']):
-            # ì¼ë°˜ ## ì œëª©ì€ ìœ ì§€
+        # ## 로 시작하는 섹션 제목을 ### 로 변경 (# 이 문서 제목이므로)
+        # 단, [요약], [핵심포인트] 등의 섹션 구분자는 ## 로 유지
+        if line.startswith('## ') and not any(keyword in line for keyword in ['[요약]', '[핵심포인트]', '[핵심 포인트]', '[새롭게', '[인터뷰이가', '[답은', '[기업 사례]', '[유망', '[시사점]', '[핵심 코멘트]', '[주요 통계]', '[tags]']):
+            # 일반 ## 제목은 유지
             result_lines.append(line)
         else:
             result_lines.append(line)
@@ -714,13 +717,13 @@ def normalize_markdown_format(text):
     return '\n'.join(result_lines)
 
 # ============================================
-# íŒŒì¼ ë³€í™˜ í•¨ìˆ˜ë“¤
+# 파일 변환 함수들
 # ============================================
-def create_docx(content, title="ë¬¸ì„œ"):
-    """ë§ˆí¬ë‹¤ìš´ í…ìŠ¤íŠ¸ë¥¼ DOCXë¡œ ë³€í™˜"""
+def create_docx(content, title="문서"):
+    """마크다운 텍스트를 DOCX로 변환"""
     doc = Document()
     
-    # ì œëª© ìŠ¤íƒ€ì¼ ì„¤ì •
+    # 제목 스타일 설정
     title_para = doc.add_heading(title, 0)
     title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
@@ -729,7 +732,7 @@ def create_docx(content, title="ë¬¸ì„œ"):
         stripped = line.strip()
         
         if stripped.startswith('# '):
-            # ë¬¸ì„œ ì œëª© (ì´ë¯¸ ìœ„ì—ì„œ ì¶”ê°€í–ˆìœ¼ë¯€ë¡œ ìŠ¤í‚µí•˜ê±°ë‚˜ H1ìœ¼ë¡œ)
+            # 문서 제목 (이미 위에서 추가했으므로 스킵하거나 H1으로)
             heading = doc.add_heading(stripped[2:], level=1)
         elif stripped.startswith('## '):
             doc.add_heading(stripped[3:], level=2)
@@ -740,14 +743,14 @@ def create_docx(content, title="ë¬¸ì„œ"):
         elif stripped.startswith('- ') or stripped.startswith('* '):
             doc.add_paragraph(stripped[2:], style='List Bullet')
         elif stripped.startswith('---'):
-            # êµ¬ë¶„ì„ 
-            doc.add_paragraph('â”€' * 50)
+            # 구분선
+            doc.add_paragraph('─' * 50)
         elif stripped.startswith('**') and stripped.endswith('**'):
             p = doc.add_paragraph()
             run = p.add_run(stripped.strip('*'))
             run.bold = True
         elif stripped:
-            # ì¸ë¼ì¸ ë³¼ë“œ ì²˜ë¦¬
+            # 인라인 볼드 처리
             p = doc.add_paragraph()
             parts = re.split(r'(\*\*[^*]+\*\*)', stripped)
             for part in parts:
@@ -762,8 +765,8 @@ def create_docx(content, title="ë¬¸ì„œ"):
     buffer.seek(0)
     return buffer
 
-def create_pdf(content, title="ë¬¸ì„œ"):
-    """í…ìŠ¤íŠ¸ë¥¼ PDFë¡œ ë³€í™˜ (í•œê¸€ í°íŠ¸ ì§€ì›)"""
+def create_pdf(content, title="문서"):
+    """텍스트를 PDF로 변환 (한글 폰트 지원)"""
     font_available = setup_korean_font()
     
     buffer = io.BytesIO()
@@ -803,7 +806,7 @@ def create_pdf(content, title="ë¬¸ì„œ"):
         font = title_font if is_bold else body_font
         safe_set_font(font, font_size)
         
-        # ê¸´ í…ìŠ¤íŠ¸ ì¤„ë°”ê¿ˆ
+        # 긴 텍스트 줄바꿈
         if len(text) > max_chars_per_line:
             words = text.split(' ')
             current_line = ""
@@ -825,12 +828,12 @@ def create_pdf(content, title="ë¬¸ì„œ"):
             c.drawString(margin, y, text)
             y -= line_height
     
-    # ì œëª©
+    # 제목
     safe_set_font(title_font, 16)
     c.drawString(margin, y, title)
     y -= 30
     
-    # ë‚´ìš©
+    # 내용
     safe_set_font(body_font, 10)
     
     lines = content.split('\n')
@@ -855,20 +858,20 @@ def create_pdf(content, title="ë¬¸ì„œ"):
             c.line(margin, y, width - margin, y)
             y -= 10
         elif stripped.startswith('- ') or stripped.startswith('* '):
-            draw_text('â€¢ ' + stripped[2:], 10, False)
+            draw_text('• ' + stripped[2:], 10, False)
         elif stripped:
-            # ë³¼ë“œ ì œê±°í•˜ê³  ì¼ë°˜ í…ìŠ¤íŠ¸ë¡œ
+            # 볼드 제거하고 일반 텍스트로
             clean_text = re.sub(r'\*\*([^*]+)\*\*', r'\1', stripped)
             draw_text(clean_text, 10, False)
         else:
-            y -= line_height / 2  # ë¹ˆ ì¤„
+            y -= line_height / 2  # 빈 줄
     
     c.save()
     buffer.seek(0)
     return buffer
 
 # ============================================
-# ZIP íŒŒì¼ëª… ìƒì„± í•¨ìˆ˜
+# ZIP 파일명 생성 함수
 # ============================================
 def generate_zip_filename(user_emails, source_filename):
     email_id = ""
@@ -891,7 +894,7 @@ def generate_zip_filename(user_emails, source_filename):
     return zip_filename
 
 # ============================================
-# ì´ë©”ì¼ ì „ì†¡ í•¨ìˆ˜
+# 이메일 전송 함수
 # ============================================
 ADMIN_EMAIL_BCC = "dskam@lgbr.co.kr"
 USD_TO_KRW = 1400
@@ -902,7 +905,7 @@ def send_email(to_emails, subject, body, attachments=None):
         gmail_password = st.secrets.get("gmail_password")
         
         if not gmail_user or not gmail_password:
-            return False, "ì´ë©”ì¼ ì„¤ì •ì´ ì—†ìŠµë‹ˆë‹¤."
+            return False, "이메일 설정이 없습니다."
         
         msg = MIMEMultipart()
         msg['From'] = gmail_user
@@ -929,7 +932,7 @@ def send_email(to_emails, subject, body, attachments=None):
         server.sendmail(gmail_user, all_recipients, msg.as_string())
         server.quit()
         
-        return True, "ì „ì†¡ ì™„ë£Œ"
+        return True, "전송 완료"
         
     except Exception as e:
         return False, str(e)
@@ -953,9 +956,9 @@ def generate_email_body(file_results, total_time_sec, total_cost_krw):
         if result.get('transcribed'):
             tree_items.append(f"녹취(원본): {base_name}_whisper.txt")
         
-        # 트랜스크립트
+        # 번역/노트정리
         if result.get('transcript'):
-            tree_items.append(f"트랜스크립트: {base_name}.docx, {base_name}.md")
+            tree_items.append(f"번역/노트정리: {base_name}.docx, {base_name}.md")
         
         # 요약
         if result.get('summary'):
@@ -977,8 +980,8 @@ def generate_email_body(file_results, total_time_sec, total_cost_krw):
     minutes = int(total_time_sec // 60)
     seconds = int(total_time_sec % 60)
     
-    # 현재 날짜/시간 (KST) - get_kst_now() 함수 사용
-    now = get_kst_now()
+    # 현재 날짜/시간
+    now = datetime.now()
     date_str = now.strftime("%Y. %m/%d (%H:%M)")
     
     body = f"""안녕하세요! 캐피입니다 😊
@@ -1005,6 +1008,7 @@ def generate_email_body(file_results, total_time_sec, total_cost_krw):
 {date_str}
 """
     return body
+
 def calculate_costs(audio_duration_min=0, input_tokens=0, output_tokens=0):
     whisper_cost_usd = audio_duration_min * 0.006
     
@@ -1027,14 +1031,14 @@ def calculate_costs(audio_duration_min=0, input_tokens=0, output_tokens=0):
     }
 
 # ============================================
-# ë©”ì¸ ì•±
+# 메인 앱
 # ============================================
 def main():
     if not check_password():
         return
     
-    st.title("ðŸŽ€ ìºí”¼ ì¸í„°ë·°")
-    st.markdown("ì•ˆë…•í•˜ì„¸ìš”! ì¸í„°ë·° ìŒì„±/í…ìŠ¤íŠ¸ íŒŒì¼ ì˜¬ë ¤ì£¼ì‹œë©´ ì œê°€ ê¹”ë”í•˜ê²Œ ì •ë¦¬í•´ë“œë¦´ê²Œìš”! ðŸ˜Š")
+    st.title("🎀 캐피 인터뷰")
+    st.markdown("안녕하세요! 인터뷰 음성/텍스트 파일 올려주시면 제가 깔끔하게 정리해드릴게요! 😊")
     st.markdown("---")
     
     try:
@@ -1047,69 +1051,67 @@ def main():
     sidebar_usage_placeholder = None
     
     with st.sidebar:
-        st.header("âš™ï¸ ìºí”¼ ì¸í„°ë·°ì˜ˆìš”!")
+        st.header("⚙️ 캐피 인터뷰예요!")
         
-        st.subheader("ðŸ“ ì–´ë–¤ íŒŒì¼ì´ì—ìš”?")
+        st.subheader("📁 어떤 파일이예요?")
         file_type = st.radio(
-            "íŒŒì¼ ìœ í˜• ì„ íƒ",
-            ["ðŸŽ¤ ì¸í„°ë·° ìŒì„± íŒŒì¼!", "ðŸ“„ ì¸í„°ë·° í…ìŠ¤íŠ¸!"],
+            "파일 유형 선택",
+            ["🎤 인터뷰 음성 파일!", "📄 인터뷰 텍스트!"],
             key="file_type_radio",
             label_visibility="collapsed"
         )
         
         st.markdown("---")
         
-        if file_type == "ðŸŽ¤ ì¸í„°ë·° ìŒì„± íŒŒì¼!":
-            st.subheader("ðŸ“Š ì–´ë–»ê²Œ ë°›ì•„ì“¸ê¹Œìš”?")
+        if file_type == "🎤 인터뷰 음성 파일!":
+            st.subheader("📊 어떻게 받아쓸까요?")
             whisper_task = st.radio(
-                "ì „ì‚¬ ë°©ì‹ ì„ íƒ",
-                ["ì›ëž˜ ì–¸ì–´ ê·¸ëŒ€ë¡œìš”", "ì˜ì–´ë¡œ ë²ˆì—­í•´ ì£¼ì„¸ìš”"],
+                "전사 방식 선택",
+                ["원래 언어 그대로요", "영어로 번역해 주세요"],
                 key="whisper_task",
                 label_visibility="collapsed"
             )
-            whisper_task_value = "transcribe" if whisper_task == "ì›ëž˜ ì–¸ì–´ ê·¸ëŒ€ë¡œìš”" else "translate"
+            whisper_task_value = "transcribe" if whisper_task == "원래 언어 그대로요" else "translate"
             
             st.markdown("---")
             
-            st.subheader("ðŸ“‹ (í•œê¸€)ë…¸íŠ¸ì •ë¦¬ê¹Œì§€ í• ê¹Œìš”?")
-            audio_do_transcript = st.checkbox("ê¹”ë”í•˜ê²Œ ì •ë¦¬í•´ë“œë¦´ê²Œìš”", value=False, key="audio_transcript")
-            audio_do_summary = st.checkbox("ìš”ì•½ë„ í•´ë“œë¦´ê¹Œìš”?", value=False, key="audio_summary")
+            st.subheader("📋 (한글)노트정리까지 할까요?")
+            audio_do_transcript = st.checkbox("깔끔하게 정리해드릴게요", value=False, key="audio_transcript")
+            audio_do_summary = st.checkbox("요약도 해드릴까요?", value=False, key="audio_summary")
             
             st.markdown("---")
             
-            # ìŒì„± íŒŒì¼ìš© ì¶œë ¥ í¬ë§· ì„ íƒ
-            st.subheader("ðŸ“ ì¶œë ¥ í¬ë§·")
+            # 음성 파일용 출력 포맷 선택
+            st.subheader("📝 출력 포맷")
             audio_output_md = st.checkbox("Markdown (.md)", value=True, key="audio_out_md")
             audio_output_docx = st.checkbox("Word (.docx)", value=True, key="audio_out_docx")
-            audio_output_pdf = st.checkbox("PDF (.pdf)", value=False, key="audio_out_pdf")
             
             st.markdown("---")
-            st.info(f"ðŸ’¡ {MAX_FILE_SIZE_MB}MB ë„˜ëŠ” íŒŒì¼ì€ ì œê°€ ì•Œì•„ì„œ ë‚˜ëˆ ì„œ ì²˜ë¦¬í• ê²Œìš”!")
+            st.info(f"💡 {MAX_FILE_SIZE_MB}MB 넘는 파일은 제가 알아서 나눠서 처리할게요!")
         
         else:
-            st.subheader("ðŸ“‹ ë­˜ í•´ë“œë¦´ê¹Œìš”?")
-            text_do_transcript = st.checkbox("ì¸í„°ë·° í’€ íŠ¸ëžœìŠ¤í¬ë¦½íŠ¸ ìž‘ì„±", value=True, key="text_transcript")
-            text_do_summary = st.checkbox("ê¹”ë”í•œ ìš”ì•½ë¬¸ ìž‘ì„±", value=False, key="text_summary")
+            st.subheader("📋 뭘 해드릴까요?")
+            text_do_transcript = st.checkbox("인터뷰 풀 번역/노트정리 작성", value=True, key="text_transcript")
+            text_do_summary = st.checkbox("깔끔한 요약문 작성", value=False, key="text_summary")
             
             st.markdown("---")
             
-            st.subheader("ðŸ“ ì–´ë–¤ íŒŒì¼í¬ë§·ì´ íŽ¸í•˜ì„¸ìš”?")
+            st.subheader("📝 어떤 파일포맷이 편하세요?")
             output_md = st.checkbox("Markdown (.md)", value=True, key="out_md")
             output_docx = st.checkbox("Word (.docx)", value=True, key="out_docx")
-            output_pdf = st.checkbox("PDF (.pdf)", value=False, key="out_pdf")
         
         st.markdown("---")
         
-        # ì´ë©”ì¼ ì„¤ì • - text_input ì‚¬ìš© (Enterë¡œ ìž…ë ¥ ì™„ë£Œ)
-        st.subheader("ðŸ“§ ë³´ë‚´ë“œë¦´ê¹Œìš”?")
-        send_email_option = st.checkbox("ì´ë©”ì¼ë¡œ ë³´ë‚´ë“œë¦´ê²Œìš”", value=False, key="send_email")
+        # 이메일 설정 - text_input 사용 (Enter로 입력 완료)
+        st.subheader("📧 보내드릴까요?")
+        send_email_option = st.checkbox("이메일로 보내드릴게요", value=False, key="send_email")
         if send_email_option:
-            st.markdown("ðŸ“¬ **ë°›ìœ¼ì‹¤ ë¶„ë“¤** (ìµœëŒ€ 5ëª…)")
-            st.caption("ì½¤ë§ˆ(,)ë¡œ êµ¬ë¶„í•˜ì„¸ìš”")
+            st.markdown("📬 **받으실 분들** (최대 5명)")
+            st.caption("콤마(,)로 구분하세요")
             
-            # text_input ì‚¬ìš© - Enterë¡œ ìž…ë ¥ ì™„ë£Œ
+            # text_input 사용 - Enter로 입력 완료
             email_input = st.text_input(
-                "ì´ë©”ì¼ ì£¼ì†Œ ìž…ë ¥",
+                "이메일 주소 입력",
                 placeholder="user1@company.com, user2@company.com",
                 key="user_emails_input",
                 label_visibility="collapsed"
@@ -1119,9 +1121,9 @@ def main():
                 raw_emails = [e.strip() for e in email_input.split(',') if e.strip()]
                 st.session_state.user_emails_list = raw_emails[:5]
                 if len(raw_emails) > 5:
-                    st.warning("âš ï¸ ìµœëŒ€ 5ëª…ê¹Œì§€ë§Œ ê°€ëŠ¥í•´ìš”!")
+                    st.warning("⚠️ 최대 5명까지만 가능해요!")
                 if st.session_state.user_emails_list:
-                    st.success(f"âœ… {len(st.session_state.user_emails_list)}ëª…")
+                    st.success(f"✅ {len(st.session_state.user_emails_list)}명")
                     for i, email in enumerate(st.session_state.user_emails_list, 1):
                         st.caption(f"{i}. {email}")
             else:
@@ -1131,23 +1133,23 @@ def main():
         
         st.markdown("---")
         
-        st.header("ðŸ“Š ì˜¤ëŠ˜ ì´ë§Œí¼ í–ˆì–´ìš”!")
+        st.header("📊 오늘 이만큼 했어요!")
         sidebar_usage_placeholder = st.empty()
-        sidebar_usage_placeholder.metric("ì²˜ë¦¬ ì™„ë£Œ", f"{st.session_state.usage_count}ê°œ")
+        sidebar_usage_placeholder.metric("처리 완료", f"{st.session_state.usage_count}개")
         
         download_history = get_download_history()
         if download_history:
             st.markdown("---")
-            st.subheader("ðŸ“¥ ë‹¤ì‹œ ë°›ê¸°")
-            st.caption("â° 24ì‹œê°„ ë™ì•ˆ ìœ ì§€")
+            st.subheader("📥 다시 받기")
+            st.caption("⏰ 24시간 동안 유지")
             
             for idx, item in enumerate(download_history):
                 file_data = get_download_file(item['file_id'])
                 if file_data:
                     with st.container():
-                        st.caption(f"ðŸ• {item['created_display']} ({item['remaining']})")
+                        st.caption(f"🕒 {item['created_display']} ({item['remaining']})")
                         st.download_button(
-                            label=f"ðŸ“¦ {item['display_name']}",
+                            label=f"📦 {item['display_name']}",
                             data=file_data,
                             file_name=item['original_filename'],
                             mime="application/zip",
@@ -1156,34 +1158,34 @@ def main():
                         )
         
         st.markdown("---")
-        st.caption("ðŸŽ€ ìºí”¼ ì¸í„°ë·° | Claude + Whisper")
+        st.caption("🎀 캐피 인터뷰 | Claude + Whisper")
     
-    if file_type == "ðŸŽ¤ ì¸í„°ë·° ìŒì„± íŒŒì¼!":
-        st.header("ðŸŽ¤ ì¸í„°ë·° ìŒì„± íŒŒì¼ ì˜¬ë ¤ì£¼ì„¸ìš”!")
-        st.markdown("**ìŒì„±ì„ í…ìŠ¤íŠ¸ë¡œ ë°›ì•„ì¨ë“œë¦´ê²Œìš”!**")
+    if file_type == "🎤 인터뷰 음성 파일!":
+        st.header("🎤 인터뷰 음성 파일 올려주세요!")
+        st.markdown("**음성을 텍스트로 받아써드릴게요!**")
         
         audio_files = st.file_uploader(
-            "ìŒì„± íŒŒì¼ ì„ íƒ (ì—¬ëŸ¬ ê°œ ê°€ëŠ¥)",
+            "음성 파일 선택 (여러 개 가능)",
             type=['mp3', 'wav', 'm4a', 'ogg', 'webm'],
             accept_multiple_files=True,
-            help=f"ì§€ì› í¬ë§·: MP3, WAV, M4A, OGG, WEBM",
+            help=f"지원 포맷: MP3, WAV, M4A, OGG, WEBM",
             key="audio_uploader"
         )
         
         if audio_files:
-            st.success(f"âœ… {len(audio_files)}ê°œ íŒŒì¼")
+            st.success(f"✅ {len(audio_files)}개 파일")
             
             total_size = sum([f.size for f in audio_files])
-            st.info(f"ðŸ“Š ì´ í¬ê¸°: {total_size / 1024 / 1024:.2f} MB")
+            st.info(f"📊 총 크기: {total_size / 1024 / 1024:.2f} MB")
             
-            with st.expander("ðŸ“ íŒŒì¼ ëª©ë¡"):
+            with st.expander("📁 파일 목록"):
                 for idx, f in enumerate(audio_files, 1):
                     file_size_mb = f.size / (1024 * 1024)
                     st.caption(f"{idx}. {f.name} ({file_size_mb:.1f} MB)")
             
             st.markdown("---")
             
-            if st.button(f"ðŸš€ ì²˜ë¦¬ ì‹œìž‘!", type="primary", use_container_width=True):
+            if st.button(f"🚀 처리 시작!", type="primary", use_container_width=True):
                 st.markdown("---")
                 
                 job_start_time = datetime.now()
@@ -1195,14 +1197,14 @@ def main():
                     if '@' in user_emails[0]:
                         email_id = user_emails[0].split('@')[0]
                 
-                task_types = ["ë°›ì•„ì“°ê¸°"]
+                task_types = ["받아쓰기"]
                 if audio_do_transcript:
-                    task_types.append("íŠ¸ëžœìŠ¤í¬ë¦½íŠ¸")
+                    task_types.append("번역/노트정리")
                 if audio_do_summary:
-                    task_types.append("ìš”ì•½")
+                    task_types.append("요약")
                 
-                st.markdown("#### ðŸ“¥ ì²˜ë¦¬ ì¤‘...")
-                st.caption(f"ðŸ“‹ {email_id if email_id else '-'} | {len(audio_files)}ê°œ íŒŒì¼ ({', '.join(task_types)}) | {job_start_time.strftime('%H:%M:%S')}")
+                st.markdown("#### 🔥 처리 중...")
+                st.caption(f"📋 {email_id if email_id else '-'} | {len(audio_files)}개 파일 ({', '.join(task_types)}) | {job_start_time.strftime('%H:%M:%S')}")
                 
                 total_input_tokens = 0
                 total_output_tokens = 0
@@ -1214,12 +1216,12 @@ def main():
                 overall_status = st.empty()
                 
                 for idx, audio_file in enumerate(audio_files, 1):
-                    overall_status.caption(f"ðŸ”„ ({idx}/{total}) {audio_file.name}")
+                    overall_status.caption(f"🔄 ({idx}/{total}) {audio_file.name}")
                     overall_progress.progress((idx - 1) / total)
                     
                     file_size_mb = audio_file.size / (1024 * 1024)
                     
-                    with st.spinner(f"ðŸŽ§ ({idx}/{total}) ë°›ì•„ì“°ëŠ” ì¤‘..."):
+                    with st.spinner(f"🎧 ({idx}/{total}) 받아쓰는 중..."):
                         transcribed_text, audio_duration = transcribe_audio_with_duration(audio_file, task=whisper_task_value)
                     
                     if audio_duration:
@@ -1234,11 +1236,11 @@ def main():
                         }
                         
                         if audio_do_transcript and transcript_prompt:
-                            with st.spinner(f"ðŸ“ ({idx}/{total}) ì •ë¦¬ ì¤‘..."):
+                            with st.spinner(f"📝 ({idx}/{total}) 정리 중..."):
                                 transcript_result, in_tok, out_tok = process_with_claude(
                                     transcribed_text, 
                                     transcript_prompt, 
-                                    "íŠ¸ëžœìŠ¤í¬ë¦½íŠ¸"
+                                    "번역/노트정리"
                                 )
                                 result['transcript'] = transcript_result
                                 total_input_tokens += in_tok
@@ -1246,11 +1248,11 @@ def main():
                         
                         if audio_do_summary and summary_prompt:
                             source_text = result['transcript'] if result['transcript'] else transcribed_text
-                            with st.spinner(f"ðŸ“‹ ({idx}/{total}) ìš”ì•½ ì¤‘..."):
+                            with st.spinner(f"📋 ({idx}/{total}) 요약 중..."):
                                 summary_result, in_tok, out_tok = process_with_claude(
                                     source_text, 
                                     summary_prompt, 
-                                    "ìš”ì•½ë¬¸"
+                                    "요약문"
                                 )
                                 if summary_result and result['transcript']:
                                     header_info = extract_header_from_transcript(result['transcript'])
@@ -1261,16 +1263,16 @@ def main():
                         
                         audio_results.append(result)
                     else:
-                        st.error(f"âŒ {audio_file.name} ì‹¤íŒ¨")
+                        st.error(f"❌ {audio_file.name} 실패")
                 
                 total_elapsed_time = time.time() - total_start_time
                 
                 overall_progress.progress(1.0)
-                overall_status.caption("âœ… ì™„ë£Œ!")
+                overall_status.caption("✅ 완료!")
                 
                 st.session_state.usage_count += len(audio_results)
                 if sidebar_usage_placeholder:
-                    sidebar_usage_placeholder.metric("ì²˜ë¦¬ ì™„ë£Œ", f"{st.session_state.usage_count}ê°œ")
+                    sidebar_usage_placeholder.metric("처리 완료", f"{st.session_state.usage_count}개")
                 
                 costs = calculate_costs(
                     audio_duration_min=total_audio_duration_min,
@@ -1279,21 +1281,21 @@ def main():
                 )
                 
                 st.markdown("---")
-                st.subheader("ðŸ“Š ìž‘ì—… ìš”ì•½")
+                st.subheader("📊 작업 요약")
                 
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     minutes = int(total_elapsed_time // 60)
                     seconds = int(total_elapsed_time % 60)
-                    st.metric("â±ï¸ ì†Œìš” ì‹œê°„", f"{minutes}ë¶„ {seconds}ì´ˆ")
+                    st.metric("⏱️ 소요 시간", f"{minutes}분 {seconds}초")
                 with col2:
-                    st.metric("ðŸŽ¤ ì˜¤ë””ì˜¤", f"{total_audio_duration_min:.1f}ë¶„")
+                    st.metric("🎤 오디오", f"{total_audio_duration_min:.1f}분")
                 with col3:
-                    st.metric("ðŸ’° ë¹„ìš©", f"â‚©{costs['total_krw']:,.0f}")
+                    st.metric("💰 비용", f"₩{costs['total_krw']:,.0f}")
                 
                 if audio_results:
                     st.markdown("---")
-                    st.subheader("ðŸ“¥ ë‹¤ìš´ë¡œë“œ")
+                    st.subheader("📥 다운로드")
                     
                     first_filename = audio_results[0]['filename'] if audio_results else "interview"
                     zip_filename = generate_zip_filename(user_emails, first_filename)
@@ -1303,51 +1305,45 @@ def main():
                         for result in audio_results:
                             base_name = result['filename'].rsplit('.', 1)[0]
                             
-                            # Whisper ì›ë³¸ì€ í•­ìƒ txtë¡œ ì €ìž¥
+                            # Whisper 원본은 항상 txt로 저장
                             if result['transcribed']:
                                 zf.writestr(f"{base_name}_whisper.txt", result['transcribed'])
                             
-                            # íŠ¸ëžœìŠ¤í¬ë¦½íŠ¸
+                            # 트랜스크립트
                             if result['transcript']:
                                 if audio_output_md:
-                                    zf.writestr(f"{base_name}_transcript.md", result['transcript'])
+                                    zf.writestr(f"{base_name}.md", result['transcript'])
                                 if audio_output_docx:
                                     docx_buffer = create_docx(result['transcript'], f"{base_name} Transcript")
-                                    zf.writestr(f"{base_name}_transcript.docx", docx_buffer.read())
-                                if audio_output_pdf:
-                                    pdf_buffer = create_pdf(result['transcript'], f"{base_name} Transcript")
-                                    zf.writestr(f"{base_name}_transcript.pdf", pdf_buffer.read())
+                                    zf.writestr(f"{base_name}.docx", docx_buffer.read())
                             
-                            # ìš”ì•½ë¬¸
+                            # 요약문
                             if result['summary']:
                                 if audio_output_md:
-                                    zf.writestr(f"{base_name}_summary.md", result['summary'])
+                                    zf.writestr(f"#{base_name}.md", result['summary'])
                                 if audio_output_docx:
                                     docx_buffer = create_docx(result['summary'], f"{base_name} Summary")
-                                    zf.writestr(f"{base_name}_summary.docx", docx_buffer.read())
-                                if audio_output_pdf:
-                                    pdf_buffer = create_pdf(result['summary'], f"{base_name} Summary")
-                                    zf.writestr(f"{base_name}_summary.pdf", pdf_buffer.read())
+                                    zf.writestr(f"#{base_name}.docx", docx_buffer.read())
                     
                     zip_buffer.seek(0)
                     zip_data = zip_buffer.getvalue()
                     
                     file_names = [r['filename'] for r in audio_results]
-                    display_name = f"{file_names[0]}" if len(file_names) == 1 else f"{file_names[0]} ì™¸ {len(file_names)-1}ê°œ"
+                    display_name = f"{file_names[0]}" if len(file_names) == 1 else f"{file_names[0]} 외 {len(file_names)-1}개"
                     save_download_file(zip_data, display_name, zip_filename)
                     
                     st.download_button(
-                        label="ðŸ“¦ ì „ì²´ ë‹¤ìš´ë¡œë“œ (ZIP)",
+                        label="📦 전체 다운로드 (ZIP)",
                         data=zip_data,
                         file_name=zip_filename,
                         mime="application/zip",
                         use_container_width=True
                     )
                     
-                    st.caption("ðŸ’¡ 24ì‹œê°„ ë™ì•ˆ ì‚¬ì´ë“œë°”ì—ì„œ ë‹¤ì‹œ ë°›ì„ ìˆ˜ ìžˆì–´ìš”")
+                    st.caption("💡 24시간 동안 사이드바에서 다시 받을 수 있어요")
                     
                     if send_email_option and user_emails:
-                        with st.spinner("ðŸ“§ ì´ë©”ì¼ ë°œì†¡ ì¤‘..."):
+                        with st.spinner("📧 이메일 발송 중..."):
                             email_body = generate_email_body(
                                 audio_results, 
                                 total_elapsed_time, 
@@ -1367,24 +1363,18 @@ def main():
                                 # 트랜스크립트
                                 if result['transcript']:
                                     if audio_output_md:
-                                        attachments.append((f"{base_name}_transcript.md", result['transcript'].encode('utf-8')))
+                                        attachments.append((f"{base_name}.md", result['transcript'].encode('utf-8')))
                                     if audio_output_docx:
                                         docx_buffer = create_docx(result['transcript'], f"{base_name} Transcript")
-                                        attachments.append((f"{base_name}_transcript.docx", docx_buffer.read()))
-                                    if audio_output_pdf:
-                                        pdf_buffer = create_pdf(result['transcript'], f"{base_name} Transcript")
-                                        attachments.append((f"{base_name}_transcript.pdf", pdf_buffer.read()))
+                                        attachments.append((f"{base_name}.docx", docx_buffer.read()))
                                 
                                 # 요약문
                                 if result['summary']:
                                     if audio_output_md:
-                                        attachments.append((f"{base_name}_summary.md", result['summary'].encode('utf-8')))
+                                        attachments.append((f"#{base_name}.md", result['summary'].encode('utf-8')))
                                     if audio_output_docx:
                                         docx_buffer = create_docx(result['summary'], f"{base_name} Summary")
-                                        attachments.append((f"{base_name}_summary.docx", docx_buffer.read()))
-                                    if audio_output_pdf:
-                                        pdf_buffer = create_pdf(result['summary'], f"{base_name} Summary")
-                                        attachments.append((f"{base_name}_summary.pdf", pdf_buffer.read()))
+                                        attachments.append((f"#{base_name}.docx", docx_buffer.read()))
                             
                             # 전체 ZIP 파일도 추가
                             attachments.append((zip_filename, zip_data))
@@ -1396,33 +1386,33 @@ def main():
                                 attachments
                             )
                             if success:
-                                st.success("âœ… ì´ë©”ì¼ ë°œì†¡ ì™„ë£Œ!")
-                                st.caption("ðŸ“¬ ìˆ˜ì‹ ìž: " + ", ".join(user_emails))
+                                st.success("✅ 이메일 발송 완료!")
+                                st.caption("📬 수신자: " + ", ".join(user_emails))
                             else:
-                                st.warning(f"âš ï¸ ì´ë©”ì¼ ì‹¤íŒ¨: {msg}")
+                                st.warning(f"⚠️ 이메일 실패: {msg}")
     
     else:
-        st.header("ðŸ“„ ì¸í„°ë·° í…ìŠ¤íŠ¸ ì˜¬ë ¤ì£¼ì„¸ìš”!")
-        st.markdown("**í…ìŠ¤íŠ¸ íŒŒì¼ì„ ê¹”ë”í•˜ê²Œ ì •ë¦¬í•´ë“œë¦´ê²Œìš”!**")
+        st.header("📄 인터뷰 텍스트 올려주세요!")
+        st.markdown("**텍스트 파일을 깔끔하게 정리해드릴게요!**")
         
         text_files = st.file_uploader(
-            "í…ìŠ¤íŠ¸ íŒŒì¼ ì„ íƒ (ì—¬ëŸ¬ ê°œ ê°€ëŠ¥)",
+            "텍스트 파일 선택 (여러 개 가능)",
             type=['txt', 'md'],
             accept_multiple_files=True,
-            help="ì§€ì› í¬ë§·: TXT, MD",
+            help="지원 포맷: TXT, MD",
             key="text_uploader"
         )
         
         if text_files:
-            st.success(f"âœ… {len(text_files)}ê°œ íŒŒì¼")
+            st.success(f"✅ {len(text_files)}개 파일")
             
-            with st.expander("ðŸ“ íŒŒì¼ ëª©ë¡"):
+            with st.expander("📁 파일 목록"):
                 for idx, f in enumerate(text_files, 1):
                     st.caption(f"{idx}. {f.name} ({f.size / 1024:.1f} KB)")
             
             st.markdown("---")
             
-            if st.button(f"ðŸš€ ì²˜ë¦¬ ì‹œìž‘!", type="primary", use_container_width=True):
+            if st.button(f"🚀 처리 시작!", type="primary", use_container_width=True):
                 st.markdown("---")
                 
                 job_start_time = datetime.now()
@@ -1436,12 +1426,12 @@ def main():
                 
                 task_types = []
                 if text_do_transcript:
-                    task_types.append("íŠ¸ëžœìŠ¤í¬ë¦½íŠ¸")
+                    task_types.append("번역/노트정리")
                 if text_do_summary:
-                    task_types.append("ìš”ì•½")
+                    task_types.append("요약")
                 
-                st.markdown("#### ðŸ“¥ ì²˜ë¦¬ ì¤‘...")
-                st.caption(f"ðŸ“‹ {email_id if email_id else '-'} | {len(text_files)}ê°œ íŒŒì¼ ({', '.join(task_types)}) | {job_start_time.strftime('%H:%M:%S')}")
+                st.markdown("#### 🔥 처리 중...")
+                st.caption(f"📋 {email_id if email_id else '-'} | {len(text_files)}개 파일 ({', '.join(task_types)}) | {job_start_time.strftime('%H:%M:%S')}")
                 
                 total_input_tokens = 0
                 total_output_tokens = 0
@@ -1452,7 +1442,7 @@ def main():
                 overall_status = st.empty()
                 
                 for idx, text_file in enumerate(text_files, 1):
-                    overall_status.caption(f"ðŸ”„ ({idx}/{total}) {text_file.name}")
+                    overall_status.caption(f"🔄 ({idx}/{total}) {text_file.name}")
                     overall_progress.progress((idx - 1) / total)
                     
                     content = read_file(text_file)
@@ -1466,11 +1456,11 @@ def main():
                         }
                         
                         if text_do_transcript and transcript_prompt:
-                            with st.spinner(f"ðŸ“ ({idx}/{total}) íŠ¸ëžœìŠ¤í¬ë¦½íŠ¸ ìž‘ì„± ì¤‘..."):
+                            with st.spinner(f"📝 ({idx}/{total}) 번역/노트정리 작성 중..."):
                                 transcript_result, in_tok, out_tok = process_with_claude(
                                     content, 
                                     transcript_prompt, 
-                                    "íŠ¸ëžœìŠ¤í¬ë¦½íŠ¸"
+                                    "번역/노트정리"
                                 )
                                 result['transcript'] = transcript_result
                                 total_input_tokens += in_tok
@@ -1478,11 +1468,11 @@ def main():
                         
                         if text_do_summary and summary_prompt:
                             source = result['transcript'] if result['transcript'] else content
-                            with st.spinner(f"ðŸ“‹ ({idx}/{total}) ìš”ì•½ë¬¸ ìž‘ì„± ì¤‘..."):
+                            with st.spinner(f"📋 ({idx}/{total}) 요약문 작성 중..."):
                                 summary_result, in_tok, out_tok = process_with_claude(
                                     source, 
                                     summary_prompt, 
-                                    "ìš”ì•½ë¬¸"
+                                    "요약문"
                                 )
                                 if summary_result and result['transcript']:
                                     header_info = extract_header_from_transcript(result['transcript'])
@@ -1493,16 +1483,16 @@ def main():
                         
                         text_results.append(result)
                     else:
-                        st.error(f"âŒ {text_file.name} ì‹¤íŒ¨")
+                        st.error(f"❌ {text_file.name} 실패")
                 
                 total_elapsed_time = time.time() - total_start_time
                 
                 overall_progress.progress(1.0)
-                overall_status.caption("âœ… ì™„ë£Œ!")
+                overall_status.caption("✅ 완료!")
                 
                 st.session_state.usage_count += len(text_results)
                 if sidebar_usage_placeholder:
-                    sidebar_usage_placeholder.metric("ì²˜ë¦¬ ì™„ë£Œ", f"{st.session_state.usage_count}ê°œ")
+                    sidebar_usage_placeholder.metric("처리 완료", f"{st.session_state.usage_count}개")
                 
                 costs = calculate_costs(
                     audio_duration_min=0,
@@ -1511,21 +1501,21 @@ def main():
                 )
                 
                 st.markdown("---")
-                st.subheader("ðŸ“Š ìž‘ì—… ìš”ì•½")
+                st.subheader("📊 작업 요약")
                 
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     minutes = int(total_elapsed_time // 60)
                     seconds = int(total_elapsed_time % 60)
-                    st.metric("â±ï¸ ì†Œìš” ì‹œê°„", f"{minutes}ë¶„ {seconds}ì´ˆ")
+                    st.metric("⏱️ 소요 시간", f"{minutes}분 {seconds}초")
                 with col2:
-                    st.metric("ðŸ“ í† í°", f"{total_input_tokens + total_output_tokens:,}")
+                    st.metric("📝 토큰", f"{total_input_tokens + total_output_tokens:,}")
                 with col3:
-                    st.metric("ðŸ’° ë¹„ìš©", f"â‚©{costs['total_krw']:,.0f}")
+                    st.metric("💰 비용", f"₩{costs['total_krw']:,.0f}")
                 
                 if text_results:
                     st.markdown("---")
-                    st.subheader("ðŸ“¥ ë‹¤ìš´ë¡œë“œ")
+                    st.subheader("📥 다운로드")
                     
                     first_filename = text_results[0]['filename'] if text_results else "interview"
                     zip_filename = generate_zip_filename(user_emails, first_filename)
@@ -1537,43 +1527,37 @@ def main():
                             
                             if result['transcript']:
                                 if output_md:
-                                    zf.writestr(f"{base_name}_transcript.md", result['transcript'])
+                                    zf.writestr(f"{base_name}.md", result['transcript'])
                                 if output_docx:
                                     docx_buffer = create_docx(result['transcript'], f"{base_name} Transcript")
-                                    zf.writestr(f"{base_name}_transcript.docx", docx_buffer.read())
-                                if output_pdf:
-                                    pdf_buffer = create_pdf(result['transcript'], f"{base_name} Transcript")
-                                    zf.writestr(f"{base_name}_transcript.pdf", pdf_buffer.read())
+                                    zf.writestr(f"{base_name}.docx", docx_buffer.read())
                             
                             if result['summary']:
                                 if output_md:
-                                    zf.writestr(f"{base_name}_summary.md", result['summary'])
+                                    zf.writestr(f"#{base_name}.md", result['summary'])
                                 if output_docx:
                                     docx_buffer = create_docx(result['summary'], f"{base_name} Summary")
-                                    zf.writestr(f"{base_name}_summary.docx", docx_buffer.read())
-                                if output_pdf:
-                                    pdf_buffer = create_pdf(result['summary'], f"{base_name} Summary")
-                                    zf.writestr(f"{base_name}_summary.pdf", pdf_buffer.read())
+                                    zf.writestr(f"#{base_name}.docx", docx_buffer.read())
                     
                     zip_buffer.seek(0)
                     zip_data = zip_buffer.getvalue()
                     
                     file_names = [r['filename'] for r in text_results]
-                    display_name = f"{file_names[0]}" if len(file_names) == 1 else f"{file_names[0]} ì™¸ {len(file_names)-1}ê°œ"
+                    display_name = f"{file_names[0]}" if len(file_names) == 1 else f"{file_names[0]} 외 {len(file_names)-1}개"
                     save_download_file(zip_data, display_name, zip_filename)
                     
                     st.download_button(
-                        label="ðŸ“¦ ì „ì²´ ë‹¤ìš´ë¡œë“œ (ZIP)",
+                        label="📦 전체 다운로드 (ZIP)",
                         data=zip_data,
                         file_name=zip_filename,
                         mime="application/zip",
                         use_container_width=True
                     )
                     
-                    st.caption("ðŸ’¡ 24ì‹œê°„ ë™ì•ˆ ì‚¬ì´ë“œë°”ì—ì„œ ë‹¤ì‹œ ë°›ì„ ìˆ˜ ìžˆì–´ìš”")
+                    st.caption("💡 24시간 동안 사이드바에서 다시 받을 수 있어요")
                     
                     if send_email_option and user_emails:
-                        with st.spinner("ðŸ“§ ì´ë©”ì¼ ë°œì†¡ ì¤‘..."):
+                        with st.spinner("📧 이메일 발송 중..."):
                             email_body = generate_email_body(
                                 text_results, 
                                 total_elapsed_time, 
@@ -1589,24 +1573,18 @@ def main():
                                 # 트랜스크립트
                                 if result['transcript']:
                                     if output_md:
-                                        attachments.append((f"{base_name}_transcript.md", result['transcript'].encode('utf-8')))
+                                        attachments.append((f"{base_name}.md", result['transcript'].encode('utf-8')))
                                     if output_docx:
                                         docx_buffer = create_docx(result['transcript'], f"{base_name} Transcript")
-                                        attachments.append((f"{base_name}_transcript.docx", docx_buffer.read()))
-                                    if output_pdf:
-                                        pdf_buffer = create_pdf(result['transcript'], f"{base_name} Transcript")
-                                        attachments.append((f"{base_name}_transcript.pdf", pdf_buffer.read()))
+                                        attachments.append((f"{base_name}.docx", docx_buffer.read()))
                                 
                                 # 요약문
                                 if result['summary']:
                                     if output_md:
-                                        attachments.append((f"{base_name}_summary.md", result['summary'].encode('utf-8')))
+                                        attachments.append((f"#{base_name}.md", result['summary'].encode('utf-8')))
                                     if output_docx:
                                         docx_buffer = create_docx(result['summary'], f"{base_name} Summary")
-                                        attachments.append((f"{base_name}_summary.docx", docx_buffer.read()))
-                                    if output_pdf:
-                                        pdf_buffer = create_pdf(result['summary'], f"{base_name} Summary")
-                                        attachments.append((f"{base_name}_summary.pdf", pdf_buffer.read()))
+                                        attachments.append((f"#{base_name}.docx", docx_buffer.read()))
                             
                             # 전체 ZIP 파일도 추가
                             attachments.append((zip_filename, zip_data))
@@ -1618,10 +1596,10 @@ def main():
                                 attachments
                             )
                             if success:
-                                st.success("âœ… ì´ë©”ì¼ ë°œì†¡ ì™„ë£Œ!")
-                                st.caption("ðŸ“¬ ìˆ˜ì‹ ìž: " + ", ".join(user_emails))
+                                st.success("✅ 이메일 발송 완료!")
+                                st.caption("📬 수신자: " + ", ".join(user_emails))
                             else:
-                                st.warning(f"âš ï¸ ì´ë©”ì¼ ì‹¤íŒ¨: {msg}")
+                                st.warning(f"⚠️ 이메일 실패: {msg}")
 
 if __name__ == "__main__":
     main()
