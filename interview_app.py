@@ -534,127 +534,6 @@ def check_password():
     return True
 
 # ============================================
-# 작업 처리 함수 (백그라운드 스타일)
-# ============================================
-def process_files(files, file_type, do_transcript, do_summary, out_md, out_docx, out_txt, emails, transcript_prompt, summary_prompt):
-    """파일 처리 및 이메일 발송"""
-    is_audio = file_type == 'audio'
-    results = []
-    total_audio_min = 0
-    total_in_tok = 0
-    total_out_tok = 0
-    start_time = time.time()
-    
-    for f in files:
-        base_name = f.name.rsplit('.', 1)[0]
-        result = {'filename': f.name, 'base_name': base_name, 'whisper': None, 'transcript': None, 'summary': None}
-        
-        # Step 1: 받아쓰기 또는 읽기
-        if is_audio:
-            text, duration = transcribe_audio(f)
-            total_audio_min += (duration or 0) / 60
-            result['whisper'] = text
-            source_text = text
-        else:
-            source_text = read_file(f)
-        
-        if not source_text:
-            continue
-        
-        # Step 2: 노트정리/트랜스크립트
-        if do_transcript and transcript_prompt:
-            transcript, in_t, out_t = process_with_claude(source_text, transcript_prompt, "노트정리")
-            result['transcript'] = transcript
-            total_in_tok += in_t
-            total_out_tok += out_t
-            source_text = transcript or source_text
-        
-        # Step 3: 요약
-        if do_summary and summary_prompt:
-            summary, in_t, out_t = process_with_claude(source_text, summary_prompt, "요약")
-            if summary and result['transcript']:
-                header = extract_header_from_transcript(result['transcript'])
-                summary = add_header_to_summary(summary, header)
-            result['summary'] = summary
-            total_in_tok += in_t
-            total_out_tok += out_t
-        
-        results.append(result)
-    
-    elapsed = time.time() - start_time
-    
-    if not results:
-        return None, None, None
-    
-    # ZIP 생성
-    first_name = results[0]['filename']
-    zip_filename = generate_zip_filename(emails, first_name)
-    
-    zip_buf = io.BytesIO()
-    with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for r in results:
-            base = r['base_name']
-            
-            # Whisper 원본
-            if r.get('whisper'):
-                zf.writestr(f"{base}_whisper.txt", r['whisper'])
-            
-            # 트랜스크립트
-            if r.get('transcript'):
-                if out_md:
-                    zf.writestr(f"{base}.md", r['transcript'])
-                if out_docx:
-                    docx = create_docx(r['transcript'], base)
-                    zf.writestr(f"{base}.docx", docx.read())
-                if out_txt:
-                    plain = re.sub(r'[#*_\-]+', '', r['transcript'])
-                    zf.writestr(f"{base}.txt", re.sub(r'\n{3,}', '\n\n', plain))
-            
-            # 요약문
-            if r.get('summary'):
-                if out_md:
-                    zf.writestr(f"#{base}.md", r['summary'])
-                if out_docx:
-                    docx = create_docx(r['summary'], f"#{base}")
-                    zf.writestr(f"#{base}.docx", docx.read())
-                if out_txt:
-                    plain = re.sub(r'[#*_\-]+', '', r['summary'])
-                    zf.writestr(f"#{base}.txt", re.sub(r'\n{3,}', '\n\n', plain))
-    
-    zip_buf.seek(0)
-    zip_data = zip_buf.getvalue()
-    
-    # 히스토리 저장
-    display = f"{first_name}" if len(results) == 1 else f"{first_name} 외 {len(results)-1}개"
-    save_download_file(zip_data, display, zip_filename)
-    
-    # 사용량 업데이트
-    update_usage(file_type, len(results))
-    
-    # 비용 계산
-    costs = calculate_costs(total_audio_min, total_in_tok, total_out_tok)
-    
-    # 이메일 발송
-    minutes = int(elapsed // 60)
-    seconds = int(elapsed % 60)
-    body = f"""안녕하세요! 캐피입니다 😊
-
-인터뷰 정리 결과를 공유드립니다.
-
-• 처리 파일: {len(results)}개
-• 소요 시간: {minutes}분 {seconds}초
-• 처리 비용: 약 {costs['total_krw']:,.0f}원
-
-첨부파일을 확인해주세요!
-
-───────────────────────────
-😊 캐피 인터뷰
-"""
-    send_email(emails, f"[캐피 인터뷰] 인터뷰 정리 결과 - {get_kst_now().strftime('%Y-%m-%d')}", body, [(zip_filename, zip_data)])
-    
-    return results, zip_data, zip_filename
-
-# ============================================
 # 메인 앱
 # ============================================
 def main():
@@ -675,13 +554,15 @@ def main():
     
     st.markdown("---")
     
-    # 파일 업로더
-    uploaded_files = st.file_uploader(
-        "파일 선택",
-        type=['mp3', 'wav', 'm4a', 'ogg', 'webm', 'txt', 'md'],
-        accept_multiple_files=True,
-        label_visibility="collapsed"
-    )
+    # 진행 중이 아닐 때만 업로드 UI 표시
+    if not st.session_state.get('processing', False):
+        # 파일 업로더
+        uploaded_files = st.file_uploader(
+            "파일 선택",
+            type=['mp3', 'wav', 'm4a', 'ogg', 'webm', 'txt', 'md'],
+            accept_multiple_files=True,
+            label_visibility="collapsed"
+        )
     
     if uploaded_files:
         # 파일 타입 감지
@@ -747,55 +628,262 @@ def main():
             st.warning("📧 결과를 받을 이메일을 입력해주세요.")
         
         if st.button("🚀 시작", type="primary", use_container_width=True, disabled=not can_start):
-            # 진행 상태 표시
-            st.markdown("---")
-            st.info("📨 작업이 시작되었습니다! 완료되면 이메일로 결과를 보내드릴게요.")
-            st.caption("💡 이 화면을 닫아도 작업은 계속 진행됩니다.")
-            
-            # 진행 표시
-            with st.status("처리 중...", expanded=True) as status:
-                st.write("📂 파일 준비 중...")
-                
-                # 실제 처리
-                results, zip_data, zip_filename = process_files(
-                    files, file_type, do_transcript, do_summary,
-                    out_md, out_docx, out_txt, emails,
-                    transcript_prompt, summary_prompt
-                )
-                
-                if results:
-                    st.write(f"✅ {len(results)}개 파일 처리 완료")
-                    st.write("📧 이메일 발송 완료")
-                    status.update(label="완료!", state="complete", expanded=False)
-                    
-                    # 완료 메시지
-                    st.success(f"✅ 완료! {', '.join(emails)}로 결과를 보냈어요.")
-                    
-                    # 바로 다운로드 옵션
-                    st.download_button(
-                        "📦 바로 다운로드",
-                        zip_data,
-                        zip_filename,
-                        "application/zip",
-                        use_container_width=True
-                    )
-                else:
-                    status.update(label="실패", state="error", expanded=False)
-                    st.error("❌ 파일 처리에 실패했어요. 다시 시도해주세요.")
+            # 세션에 작업 정보 저장
+            st.session_state.processing = True
+            st.session_state.proc_files = files
+            st.session_state.proc_file_type = file_type
+            st.session_state.proc_do_transcript = do_transcript
+            st.session_state.proc_do_summary = do_summary
+            st.session_state.proc_out_md = out_md
+            st.session_state.proc_out_docx = out_docx
+            st.session_state.proc_out_txt = out_txt
+            st.session_state.proc_emails = emails
+            st.rerun()
     
-    # 기존 작업물 다운로드
-    st.markdown("---")
-    history = get_download_history()
-    if history:
-        st.markdown("### 📥 최근 작업물")
-        for item in history[:5]:
-            data = get_download_file(item['file_id'])
-            if data:
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.caption(f"{item['display_name']} ({item['created_display']}, {item['remaining']} 남음)")
-                with col2:
-                    st.download_button("📦", data, item['original_filename'], "application/zip", key=item['file_id'])
+    # ========== 진행 UI ==========
+    if st.session_state.get('processing', False):
+        files = st.session_state.proc_files
+        file_type = st.session_state.proc_file_type
+        is_audio = file_type == 'audio'
+        do_transcript = st.session_state.proc_do_transcript
+        do_summary = st.session_state.proc_do_summary
+        out_md = st.session_state.proc_out_md
+        out_docx = st.session_state.proc_out_docx
+        out_txt = st.session_state.proc_out_txt
+        emails = st.session_state.proc_emails
+        
+        # 진행 화면 헤더 변경
+        st.markdown("꼼꼼하게 정리해 볼게요! 기대해 주세요 📎")
+        
+        # 진행 단계 정의
+        if is_audio:
+            if do_transcript and do_summary:
+                steps = ["받아쓰기", "노트정리", "요약", "파일생성", "이메일발송"]
+            elif do_transcript:
+                steps = ["받아쓰기", "노트정리", "파일생성", "이메일발송"]
+            elif do_summary:
+                steps = ["받아쓰기", "요약", "파일생성", "이메일발송"]
+            else:
+                steps = ["받아쓰기", "파일생성", "이메일발송"]
+        else:
+            if do_transcript and do_summary:
+                steps = ["파일읽기", "트랜스크립트", "요약", "파일생성", "이메일발송"]
+            elif do_transcript:
+                steps = ["파일읽기", "트랜스크립트", "파일생성", "이메일발송"]
+            elif do_summary:
+                steps = ["파일읽기", "요약", "파일생성", "이메일발송"]
+            else:
+                steps = ["파일읽기", "파일생성", "이메일발송"]
+        
+        # 진행 단계 표시 영역
+        progress_placeholder = st.empty()
+        status_placeholder = st.empty()
+        
+        def show_steps(current_idx):
+            """진행 단계 시각화"""
+            cols = st.columns(len(steps))
+            for i, step in enumerate(steps):
+                with cols[i]:
+                    if i < current_idx:
+                        st.markdown(f"<div style='text-align:center;color:#51cf66;font-size:0.9rem'>✓<br>{step}</div>", unsafe_allow_html=True)
+                    elif i == current_idx:
+                        st.markdown(f"<div style='text-align:center;color:#ff6b6b;font-weight:bold;font-size:0.9rem'>●<br>{step}</div>", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"<div style='text-align:center;color:#aaa;font-size:0.9rem'>○<br>{step}</div>", unsafe_allow_html=True)
+        
+        # 하단 안내 메시지
+        st.markdown("---")
+        st.info("📨 작업이 시작되었습니다! 끝나면 이메일로 결과를 보내드릴게요.")
+        st.caption("💡 이 화면을 닫아도 캐피는 계속 일할 수 있어요.")
+        
+        # 실제 처리 시작
+        results = []
+        total_audio_min = 0
+        total_in_tok = 0
+        total_out_tok = 0
+        start_time = time.time()
+        current_step = 0
+        
+        for idx, f in enumerate(files):
+            base_name = f.name.rsplit('.', 1)[0]
+            result = {'filename': f.name, 'base_name': base_name, 'whisper': None, 'transcript': None, 'summary': None}
+            
+            # Step: 받아쓰기/파일읽기
+            with progress_placeholder.container():
+                show_steps(0)
+            status_placeholder.caption(f"{'🎧 받아쓰는 중' if is_audio else '📖 파일 읽는 중'}... ({idx+1}/{len(files)}) {f.name}")
+            
+            if is_audio:
+                text, duration = transcribe_audio(f)
+                total_audio_min += (duration or 0) / 60
+                result['whisper'] = text
+                source_text = text
+            else:
+                source_text = read_file(f)
+            
+            if not source_text:
+                continue
+            
+            # Step: 노트정리/트랜스크립트
+            if do_transcript and transcript_prompt:
+                step_idx = 1
+                with progress_placeholder.container():
+                    show_steps(step_idx)
+                status_placeholder.caption(f"📝 {'노트 정리 중' if is_audio else '트랜스크립트 작성 중'}... ({idx+1}/{len(files)})")
+                
+                transcript, in_t, out_t = process_with_claude(source_text, transcript_prompt, "노트정리")
+                result['transcript'] = transcript
+                total_in_tok += in_t
+                total_out_tok += out_t
+                source_text = transcript or source_text
+            
+            # Step: 요약
+            if do_summary and summary_prompt:
+                step_idx = 2 if do_transcript else 1
+                with progress_placeholder.container():
+                    show_steps(step_idx)
+                status_placeholder.caption(f"📋 요약 작성 중... ({idx+1}/{len(files)})")
+                
+                summary, in_t, out_t = process_with_claude(source_text, summary_prompt, "요약")
+                if summary and result['transcript']:
+                    header = extract_header_from_transcript(result['transcript'])
+                    summary = add_header_to_summary(summary, header)
+                result['summary'] = summary
+                total_in_tok += in_t
+                total_out_tok += out_t
+            
+            results.append(result)
+        
+        # Step: 파일생성
+        file_step_idx = len(steps) - 2
+        with progress_placeholder.container():
+            show_steps(file_step_idx)
+        status_placeholder.caption("📁 파일 생성 중...")
+        
+        if results:
+            # ZIP 생성
+            first_name = results[0]['filename']
+            zip_filename = generate_zip_filename(emails, first_name)
+            
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for r in results:
+                    base = r['base_name']
+                    
+                    if r.get('whisper'):
+                        zf.writestr(f"{base}_whisper.txt", r['whisper'])
+                    
+                    if r.get('transcript'):
+                        if out_md:
+                            zf.writestr(f"{base}.md", r['transcript'])
+                        if out_docx:
+                            docx = create_docx(r['transcript'], base)
+                            zf.writestr(f"{base}.docx", docx.read())
+                        if out_txt:
+                            plain = re.sub(r'[#*_\-]+', '', r['transcript'])
+                            zf.writestr(f"{base}.txt", re.sub(r'\n{3,}', '\n\n', plain))
+                    
+                    if r.get('summary'):
+                        if out_md:
+                            zf.writestr(f"#{base}.md", r['summary'])
+                        if out_docx:
+                            docx = create_docx(r['summary'], f"#{base}")
+                            zf.writestr(f"#{base}.docx", docx.read())
+                        if out_txt:
+                            plain = re.sub(r'[#*_\-]+', '', r['summary'])
+                            zf.writestr(f"#{base}.txt", re.sub(r'\n{3,}', '\n\n', plain))
+            
+            zip_buf.seek(0)
+            zip_data = zip_buf.getvalue()
+            
+            # 히스토리 저장
+            display = f"{first_name}" if len(results) == 1 else f"{first_name} 외 {len(results)-1}개"
+            save_download_file(zip_data, display, zip_filename)
+            
+            # 사용량 업데이트
+            update_usage(file_type, len(results))
+            
+            # Step: 이메일발송
+            email_step_idx = len(steps) - 1
+            with progress_placeholder.container():
+                show_steps(email_step_idx)
+            status_placeholder.caption("📧 이메일 발송 중...")
+            
+            elapsed = time.time() - start_time
+            costs = calculate_costs(total_audio_min, total_in_tok, total_out_tok)
+            
+            minutes = int(elapsed // 60)
+            seconds = int(elapsed % 60)
+            body = f"""안녕하세요! 캐피입니다 😊
+
+인터뷰 정리 결과를 공유드립니다.
+
+• 처리 파일: {len(results)}개
+• 소요 시간: {minutes}분 {seconds}초
+• 처리 비용: 약 {costs['total_krw']:,.0f}원
+
+첨부파일을 확인해주세요!
+
+───────────────────────────
+😊 캐피 인터뷰
+"""
+            email_success, _ = send_email(emails, f"[캐피 인터뷰] 인터뷰 정리 결과 - {get_kst_now().strftime('%Y-%m-%d')}", body, [(zip_filename, zip_data)])
+            
+            # 완료 표시
+            with progress_placeholder.container():
+                show_steps(len(steps))  # 모든 단계 완료
+            status_placeholder.empty()
+            
+            # 완료 메시지
+            st.success(f"✅ 완료! {', '.join(emails)}로 결과를 보냈어요.")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("⏱️ 소요 시간", f"{minutes}분 {seconds}초")
+            with col2:
+                st.metric("📄 처리 파일", f"{len(results)}개")
+            with col3:
+                st.metric("💰 비용", f"₩{costs['total_krw']:,.0f}")
+            
+            st.download_button(
+                "📦 바로 다운로드",
+                zip_data,
+                zip_filename,
+                "application/zip",
+                use_container_width=True
+            )
+            
+            # 새 작업 버튼
+            if st.button("🔄 새 작업 시작", use_container_width=True):
+                for key in list(st.session_state.keys()):
+                    if key.startswith('proc_') or key == 'processing':
+                        del st.session_state[key]
+                st.rerun()
+        else:
+            status_placeholder.empty()
+            st.error("❌ 파일 처리에 실패했어요. 다시 시도해주세요.")
+            if st.button("🔄 다시 시도", use_container_width=True):
+                for key in list(st.session_state.keys()):
+                    if key.startswith('proc_') or key == 'processing':
+                        del st.session_state[key]
+                st.rerun()
+        
+        return  # 진행 중일 때는 여기서 종료
+    
+    # 기존 작업물 다운로드 (진행 중이 아닐 때만)
+    if not st.session_state.get('processing', False):
+        st.markdown("---")
+        history = get_download_history()
+        if history:
+            st.markdown("### 📥 최근 작업물")
+            for item in history[:5]:
+                data = get_download_file(item['file_id'])
+                if data:
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.caption(f"{item['display_name']} ({item['created_display']}, {item['remaining']} 남음)")
+                    with col2:
+                        st.download_button("📦", data, item['original_filename'], "application/zip", key=item['file_id'])
 
 if __name__ == "__main__":
     main()
