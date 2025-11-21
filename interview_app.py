@@ -50,11 +50,9 @@ def setup_korean_font():
         return True
     
     try:
-        # 폰트 디렉토리 생성
         if not os.path.exists(FONT_DIR):
             os.makedirs(FONT_DIR, exist_ok=True)
         
-        # 나눔고딕 폰트 다운로드 (Google Fonts)
         font_urls = {
             "NanumGothic.ttf": "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf",
             "NanumGothicBold.ttf": "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Bold.ttf"
@@ -65,7 +63,6 @@ def setup_korean_font():
             if not os.path.exists(font_path):
                 urllib.request.urlretrieve(url, font_path)
         
-        # ReportLab에 폰트 등록
         if os.path.exists(KOREAN_FONT_PATH):
             pdfmetrics.registerFont(TTFont('NanumGothic', KOREAN_FONT_PATH))
         if os.path.exists(KOREAN_FONT_BOLD_PATH):
@@ -86,7 +83,6 @@ METADATA_FILE = "/tmp/cappy_downloads/metadata.json"
 EXPIRY_HOURS = 24
 
 def init_download_system():
-    """다운로드 시스템 초기화"""
     try:
         if not os.path.exists(DOWNLOAD_DIR):
             os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -97,7 +93,6 @@ def init_download_system():
         pass
 
 def cleanup_expired_files():
-    """만료된 파일 정리"""
     try:
         if not os.path.exists(METADATA_FILE):
             return
@@ -127,7 +122,6 @@ def cleanup_expired_files():
         pass
 
 def save_download_file(zip_data, display_name, original_filename):
-    """다운로드 파일 저장 및 메타데이터 기록"""
     try:
         init_download_system()
         cleanup_expired_files()
@@ -166,7 +160,6 @@ def save_download_file(zip_data, display_name, original_filename):
         return False
 
 def get_download_history():
-    """다운로드 이력 조회"""
     try:
         init_download_system()
         cleanup_expired_files()
@@ -198,7 +191,6 @@ def get_download_history():
         return []
 
 def get_download_file(file_id):
-    """저장된 파일 데이터 반환"""
     try:
         file_path = os.path.join(DOWNLOAD_DIR, file_id)
         if os.path.exists(file_path):
@@ -221,7 +213,6 @@ MAX_FILE_SIZE_MB = 20
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
 def get_audio_duration(file_path):
-    """ffprobe를 사용하여 오디오 길이(초) 반환"""
     try:
         cmd = [
             'ffprobe', '-v', 'quiet', '-print_format', 'json',
@@ -235,7 +226,6 @@ def get_audio_duration(file_path):
         return None
 
 def split_audio_with_ffmpeg(input_path, output_dir, chunk_duration_sec=600):
-    """ffmpeg를 사용하여 오디오 파일을 청크로 분할"""
     try:
         total_duration = get_audio_duration(input_path)
         if total_duration is None:
@@ -283,7 +273,6 @@ def split_audio_with_ffmpeg(input_path, output_dir, chunk_duration_sec=600):
         return None
 
 def split_audio_file(audio_file, max_size_mb=20):
-    """오디오 파일을 지정된 크기 이하의 청크로 분할"""
     try:
         file_size_mb = audio_file.size / (1024 * 1024)
         
@@ -327,7 +316,6 @@ def split_audio_file(audio_file, max_size_mb=20):
         return None
 
 def format_time(seconds):
-    """초를 MM:SS 형식으로 변환"""
     minutes = int(seconds // 60)
     secs = int(seconds % 60)
     return f"{minutes:02d}:{secs:02d}"
@@ -336,8 +324,6 @@ def format_time(seconds):
 # 비밀번호 보호
 # ============================================
 def check_password():
-    """비밀번호 확인"""
-    
     def password_entered():
         correct_password = st.secrets.get("app_password", "interview2024")
         if st.session_state["password"] == correct_password:
@@ -364,7 +350,6 @@ def check_password():
 # Whisper 전사 함수
 # ============================================
 def transcribe_audio_with_duration(audio_file, task="transcribe"):
-    """OpenAI Whisper API를 사용하여 음성을 텍스트로 변환"""
     try:
         api_key = st.secrets.get("OPENAI_API_KEY")
         if not api_key:
@@ -413,7 +398,7 @@ def transcribe_audio_with_duration(audio_file, task="transcribe"):
                 chunk_progress.progress(progress_value)
                 progress_percent.markdown(f"**{int(progress_value * 100)}%**")
                 
-                chunk_status.markdown(f"### 🎤 청크 {chunk['index']}/{len(chunks)} 받아쓰는 중...")
+                chunk_status.markdown(f"🎤 청크 {chunk['index']}/{len(chunks)} 받아쓰는 중...")
                 chunk_detail.text(f"📍 구간: {format_time(chunk['start_time'])} ~ {format_time(chunk['end_time'])}")
                 
                 chunk['data'].seek(0)
@@ -450,7 +435,7 @@ def transcribe_audio_with_duration(audio_file, task="transcribe"):
             chunk_progress.progress(1.0)
             progress_percent.markdown("**100%**")
             total_time = int(time.time() - total_start_time)
-            chunk_status.markdown(f"### ✅ 모든 청크 받아쓰기 완료!")
+            chunk_status.markdown(f"✅ 모든 청크 받아쓰기 완료!")
             chunk_detail.text(f"🎉 총 {len(all_transcripts)}개 청크, {total_time}초 소요")
             
             merged_text = "\n\n".join([
@@ -492,7 +477,6 @@ def transcribe_audio_with_duration(audio_file, task="transcribe"):
 # Claude API 호출 함수
 # ============================================
 def process_with_claude(content: str, prompt: str, task_name: str) -> tuple:
-    """Claude API를 사용하여 텍스트 처리"""
     try:
         api_key = st.secrets.get("ANTHROPIC_API_KEY")
         if not api_key:
@@ -538,7 +522,6 @@ def process_with_claude(content: str, prompt: str, task_name: str) -> tuple:
 # 파일 읽기 함수
 # ============================================
 def read_file(uploaded_file):
-    """업로드된 파일 읽기"""
     try:
         content = uploaded_file.read().decode('utf-8')
         uploaded_file.seek(0)
@@ -557,7 +540,6 @@ def read_file(uploaded_file):
 # 헤더 추출 및 추가 함수
 # ============================================
 def extract_header_from_transcript(transcript_text):
-    """트랜스크립트에서 헤더 정보 추출"""
     header_info = {
         'title': '',
         'date': '',
@@ -588,7 +570,6 @@ def extract_header_from_transcript(transcript_text):
     return header_info
 
 def add_header_to_summary(summary_text, header_info):
-    """요약문에 헤더 추가"""
     if not summary_text:
         return summary_text
     
@@ -618,7 +599,6 @@ def add_header_to_summary(summary_text, header_info):
 # 파일 변환 함수들
 # ============================================
 def create_docx(content, title="문서"):
-    """마크다운 텍스트를 DOCX로 변환"""
     doc = Document()
     
     title_para = doc.add_heading(title, 0)
@@ -647,7 +627,6 @@ def create_docx(content, title="문서"):
     return buffer
 
 def create_pdf(content, title="문서"):
-    """텍스트를 PDF로 변환 (한글 폰트 지원)"""
     font_available = setup_korean_font()
     
     buffer = io.BytesIO()
@@ -749,11 +728,6 @@ def create_pdf(content, title="문서"):
 # ZIP 파일명 생성 함수
 # ============================================
 def generate_zip_filename(user_emails, source_filename):
-    """
-    ZIP 파일명 생성
-    형식: {이메일ID}{날짜}+{원본파일명}.zip
-    예: dskam251121+ai_coding_startup.zip
-    """
     email_id = ""
     if user_emails and len(user_emails) > 0:
         first_email = user_emails[0]
@@ -780,7 +754,6 @@ ADMIN_EMAIL_BCC = "dskam@lgbr.co.kr"
 USD_TO_KRW = 1400
 
 def send_email(to_emails, subject, body, attachments=None):
-    """이메일 전송"""
     try:
         gmail_user = st.secrets.get("gmail_user")
         gmail_password = st.secrets.get("gmail_password")
@@ -819,7 +792,6 @@ def send_email(to_emails, subject, body, attachments=None):
         return False, str(e)
 
 def generate_email_body(file_results, total_time_sec, total_cost_krw):
-    """이메일 본문 생성"""
     file_list = ""
     for result in file_results:
         tasks = []
@@ -854,7 +826,6 @@ def generate_email_body(file_results, total_time_sec, total_cost_krw):
     return body
 
 def calculate_costs(audio_duration_min=0, input_tokens=0, output_tokens=0):
-    """API 비용 계산"""
     whisper_cost_usd = audio_duration_min * 0.006
     
     claude_input_cost_usd = (input_tokens / 1_000_000) * 3.0
@@ -892,6 +863,9 @@ def main():
     except:
         transcript_prompt = ""
         summary_prompt = ""
+    
+    # 사이드바에서 usage_count를 동적으로 표시하기 위한 placeholder
+    sidebar_usage_placeholder = None
     
     with st.sidebar:
         st.header("⚙️ 캐피 인터뷰예요!")
@@ -967,7 +941,8 @@ def main():
         st.markdown("---")
         
         st.header("📊 오늘 이만큼 했어요!")
-        st.metric("처리 완료", f"{st.session_state.usage_count}개")
+        sidebar_usage_placeholder = st.empty()
+        sidebar_usage_placeholder.metric("처리 완료", f"{st.session_state.usage_count}개")
         
         download_history = get_download_history()
         if download_history:
@@ -1024,9 +999,28 @@ def main():
             
             if st.button(f"🚀 {len(audio_files)}개 파일 처리 시작할게요!", type="primary", use_container_width=True):
                 st.markdown("---")
-                st.header("📥 열심히 처리하고 있어요...")
                 
+                # 작업 시작 시간 기록
+                job_start_time = datetime.now()
                 total_start_time = time.time()
+                
+                # 이메일 ID 추출
+                user_emails = st.session_state.get('user_emails_list', [])
+                email_id = ""
+                if user_emails and len(user_emails) > 0:
+                    if '@' in user_emails[0]:
+                        email_id = user_emails[0].split('@')[0]
+                
+                # 작업 종류 계산
+                task_types = ["받아쓰기"]
+                if audio_do_transcript:
+                    task_types.append("트랜스크립트")
+                if audio_do_summary:
+                    task_types.append("요약")
+                
+                # 작업 정보 표시 (한 번만, 작은 글씨)
+                st.markdown("#### 📥 열심히 처리하고 있어요...")
+                st.caption(f"📋 **부탁받은 일:** {email_id if email_id else '(이메일 미지정)'} | {len(audio_files)}개 파일 ({', '.join(task_types)}) | 시작: {job_start_time.strftime('%H:%M:%S')}")
                 
                 total_input_tokens = 0
                 total_output_tokens = 0
@@ -1038,23 +1032,19 @@ def main():
                 overall_status = st.empty()
                 
                 for idx, audio_file in enumerate(audio_files, 1):
-                    overall_status.markdown(f"### 📄 {idx}/{total} 처리 중이에요 - {audio_file.name}")
+                    # 진행 상태 (작은 글씨, 중복 없이)
+                    overall_status.caption(f"🔄 **지금 하는 일:** ({idx}/{total}) {audio_file.name}")
                     overall_progress.progress((idx - 1) / total)
                     
-                    st.subheader(f"🎤 파일 {idx}/{total}: {audio_file.name}")
-                    
                     file_size_mb = audio_file.size / (1024 * 1024)
-                    st.info(f"📦 파일 크기: {file_size_mb:.2f} MB")
                     
-                    with st.spinner("🎧 열심히 받아쓰고 있어요..."):
+                    with st.spinner(f"🎧 ({idx}/{total}) {audio_file.name} 받아쓰는 중... ({file_size_mb:.1f}MB)"):
                         transcribed_text, audio_duration = transcribe_audio_with_duration(audio_file, task=whisper_task_value)
                     
                     if audio_duration:
                         total_audio_duration_min += audio_duration / 60
                     
                     if transcribed_text:
-                        st.success("✅ 받아쓰기 완료!")
-                        
                         result = {
                             'filename': audio_file.name,
                             'transcribed': transcribed_text,
@@ -1063,7 +1053,7 @@ def main():
                         }
                         
                         if audio_do_transcript and transcript_prompt:
-                            with st.spinner("📝 깔끔하게 정리하고 있어요..."):
+                            with st.spinner(f"📝 ({idx}/{total}) {audio_file.name} 정리하는 중..."):
                                 transcript_result, in_tok, out_tok = process_with_claude(
                                     transcribed_text, 
                                     transcript_prompt, 
@@ -1075,7 +1065,7 @@ def main():
                         
                         if audio_do_summary and summary_prompt:
                             source_text = result['transcript'] if result['transcript'] else transcribed_text
-                            with st.spinner("📋 요약하고 있어요..."):
+                            with st.spinner(f"📋 ({idx}/{total}) {audio_file.name} 요약하는 중..."):
                                 summary_result, in_tok, out_tok = process_with_claude(
                                     source_text, 
                                     summary_prompt, 
@@ -1089,25 +1079,18 @@ def main():
                                 total_output_tokens += out_tok
                         
                         audio_results.append(result)
-                        
-                        with st.expander(f"📄 {audio_file.name} 결과 미리보기"):
-                            if result['transcribed']:
-                                st.markdown("**🎤 받아쓴 내용:**")
-                                st.text_area("전사 텍스트", result['transcribed'][:2000] + "..." if len(result['transcribed']) > 2000 else result['transcribed'], height=150, key=f"trans_{idx}")
-                            if result['transcript']:
-                                st.markdown("**📝 정리된 내용:**")
-                                st.text_area("정리된 트랜스크립트", result['transcript'][:2000] + "..." if len(result['transcript']) > 2000 else result['transcript'], height=150, key=f"script_{idx}")
-                            if result['summary']:
-                                st.markdown("**📋 요약:**")
-                                st.text_area("요약", result['summary'][:2000] + "..." if len(result['summary']) > 2000 else result['summary'], height=150, key=f"sum_{idx}")
                     else:
                         st.error(f"❌ {audio_file.name} 처리에 실패했어요 ㅠㅠ")
                 
                 total_elapsed_time = time.time() - total_start_time
                 
                 overall_progress.progress(1.0)
-                overall_status.markdown("### 🎉 다 끝났어요!")
+                overall_status.caption("✅ **완료!**")
+                
+                # usage_count 업데이트 및 사이드바 갱신
                 st.session_state.usage_count += len(audio_results)
+                if sidebar_usage_placeholder:
+                    sidebar_usage_placeholder.metric("처리 완료", f"{st.session_state.usage_count}개")
                 
                 costs = calculate_costs(
                     audio_duration_min=total_audio_duration_min,
@@ -1144,11 +1127,17 @@ def main():
 _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                     """)
                 
+                # 결과 미리보기
+                if audio_results:
+                    with st.expander("📄 결과 미리보기"):
+                        for idx, result in enumerate(audio_results, 1):
+                            st.markdown(f"**{idx}. {result['filename']}**")
+                            if result['transcribed']:
+                                st.text_area("받아쓴 내용", result['transcribed'][:1000] + "..." if len(result['transcribed']) > 1000 else result['transcribed'], height=100, key=f"trans_{idx}")
+                
                 if audio_results:
                     st.markdown("---")
                     st.header("📥 결과 다운로드하세요!")
-                    
-                    user_emails = st.session_state.get('user_emails_list', [])
                     
                     first_filename = audio_results[0]['filename'] if audio_results else "interview"
                     zip_filename = generate_zip_filename(user_emails, first_filename)
@@ -1198,7 +1187,11 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                                 attachments
                             )
                             if success:
-                                st.success(f"✅ {len(user_emails)}명에게 보내드렸어요!")
+                                # 이메일 발송 성공 시 수신자 리스트 표시
+                                st.success("✅ 이메일 발송 완료!")
+                                st.markdown("**📬 발송된 수신자:**")
+                                for i, email in enumerate(user_emails, 1):
+                                    st.caption(f"  {i}. {email}")
                             else:
                                 st.warning(f"⚠️ 이메일 전송 실패했어요: {msg}")
     
@@ -1225,9 +1218,28 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
             
             if st.button(f"🚀 {len(text_files)}개 파일 처리 시작할게요!", type="primary", use_container_width=True):
                 st.markdown("---")
-                st.header("📥 열심히 처리하고 있어요...")
                 
+                # 작업 시작 시간 기록
+                job_start_time = datetime.now()
                 total_start_time = time.time()
+                
+                # 이메일 ID 추출
+                user_emails = st.session_state.get('user_emails_list', [])
+                email_id = ""
+                if user_emails and len(user_emails) > 0:
+                    if '@' in user_emails[0]:
+                        email_id = user_emails[0].split('@')[0]
+                
+                # 작업 종류 계산
+                task_types = []
+                if text_do_transcript:
+                    task_types.append("트랜스크립트")
+                if text_do_summary:
+                    task_types.append("요약")
+                
+                # 작업 정보 표시 (한 번만, 작은 글씨)
+                st.markdown("#### 📥 열심히 처리하고 있어요...")
+                st.caption(f"📋 **부탁받은 일:** {email_id if email_id else '(이메일 미지정)'} | {len(text_files)}개 파일 ({', '.join(task_types)}) | 시작: {job_start_time.strftime('%H:%M:%S')}")
                 
                 total_input_tokens = 0
                 total_output_tokens = 0
@@ -1238,10 +1250,9 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                 overall_status = st.empty()
                 
                 for idx, text_file in enumerate(text_files, 1):
-                    overall_status.markdown(f"### 📄 {idx}/{total} 처리 중이에요 - {text_file.name}")
+                    # 진행 상태 (작은 글씨, 중복 없이)
+                    overall_status.caption(f"🔄 **지금 하는 일:** ({idx}/{total}) {text_file.name}")
                     overall_progress.progress((idx - 1) / total)
-                    
-                    st.subheader(f"📄 파일 {idx}/{total}: {text_file.name}")
                     
                     content = read_file(text_file)
                     
@@ -1254,7 +1265,7 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                         }
                         
                         if text_do_transcript and transcript_prompt:
-                            with st.spinner("📝 트랜스크립트 작성 중..."):
+                            with st.spinner(f"📝 ({idx}/{total}) {text_file.name} 트랜스크립트 작성 중..."):
                                 transcript_result, in_tok, out_tok = process_with_claude(
                                     content, 
                                     transcript_prompt, 
@@ -1266,7 +1277,7 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                         
                         if text_do_summary and summary_prompt:
                             source = result['transcript'] if result['transcript'] else content
-                            with st.spinner("📋 요약문 작성 중..."):
+                            with st.spinner(f"📋 ({idx}/{total}) {text_file.name} 요약문 작성 중..."):
                                 summary_result, in_tok, out_tok = process_with_claude(
                                     source, 
                                     summary_prompt, 
@@ -1280,15 +1291,18 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                                 total_output_tokens += out_tok
                         
                         text_results.append(result)
-                        st.success(f"✅ {text_file.name} 완료!")
                     else:
                         st.error(f"❌ {text_file.name} 읽기에 실패했어요 ㅠㅠ")
                 
                 total_elapsed_time = time.time() - total_start_time
                 
                 overall_progress.progress(1.0)
-                overall_status.markdown("### 🎉 다 끝났어요!")
+                overall_status.caption("✅ **완료!**")
+                
+                # usage_count 업데이트 및 사이드바 갱신
                 st.session_state.usage_count += len(text_results)
+                if sidebar_usage_placeholder:
+                    sidebar_usage_placeholder.metric("처리 완료", f"{st.session_state.usage_count}개")
                 
                 costs = calculate_costs(
                     audio_duration_min=0,
@@ -1324,8 +1338,6 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                 if text_results:
                     st.markdown("---")
                     st.header("📥 결과 다운로드하세요!")
-                    
-                    user_emails = st.session_state.get('user_emails_list', [])
                     
                     first_filename = text_results[0]['filename'] if text_results else "interview"
                     zip_filename = generate_zip_filename(user_emails, first_filename)
@@ -1388,7 +1400,11 @@ _※ 환율: $1 = ₩{USD_TO_KRW:,} 기준_
                                 attachments
                             )
                             if success:
-                                st.success(f"✅ {len(user_emails)}명에게 보내드렸어요!")
+                                # 이메일 발송 성공 시 수신자 리스트 표시
+                                st.success("✅ 이메일 발송 완료!")
+                                st.markdown("**📬 발송된 수신자:**")
+                                for i, email in enumerate(user_emails, 1):
+                                    st.caption(f"  {i}. {email}")
                             else:
                                 st.warning(f"⚠️ 이메일 전송 실패했어요: {msg}")
 
