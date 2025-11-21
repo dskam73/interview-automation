@@ -41,11 +41,14 @@ EXPIRY_HOURS = 24
 
 def init_download_system():
     """다운로드 시스템 초기화"""
-    if not os.path.exists(DOWNLOAD_DIR):
-        os.makedirs(DOWNLOAD_DIR)
-    if not os.path.exists(METADATA_FILE):
-        with open(METADATA_FILE, 'w') as f:
-            json.dump([], f)
+    try:
+        if not os.path.exists(DOWNLOAD_DIR):
+            os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        if not os.path.exists(METADATA_FILE):
+            with open(METADATA_FILE, 'w') as f:
+                json.dump([], f)
+    except Exception:
+        pass  # 초기화 실패해도 앱은 계속 실행
 
 def cleanup_expired_files():
     """만료된 파일 정리"""
@@ -60,21 +63,24 @@ def cleanup_expired_files():
         valid_items = []
         
         for item in metadata:
-            expiry_time = datetime.fromisoformat(item['expiry_time'])
-            if current_time < expiry_time:
-                valid_items.append(item)
-            else:
-                # 만료된 파일 삭제
-                file_path = os.path.join(DOWNLOAD_DIR, item['file_id'])
-                if os.path.exists(file_path):
-                    os.remove(file_path)
+            try:
+                expiry_time = datetime.fromisoformat(item['expiry_time'])
+                if current_time < expiry_time:
+                    valid_items.append(item)
+                else:
+                    # 만료된 파일 삭제
+                    file_path = os.path.join(DOWNLOAD_DIR, item['file_id'])
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+            except Exception:
+                continue  # 개별 항목 오류 무시
         
         # 메타데이터 업데이트
         with open(METADATA_FILE, 'w') as f:
             json.dump(valid_items, f)
             
-    except Exception as e:
-        pass  # 오류 무시
+    except Exception:
+        pass  # 정리 실패해도 앱은 계속 실행
 
 def save_download_file(zip_data, display_name, original_filename):
     """다운로드 파일 저장 및 메타데이터 기록"""
@@ -91,8 +97,13 @@ def save_download_file(zip_data, display_name, original_filename):
             f.write(zip_data)
         
         # 메타데이터 읽기
-        with open(METADATA_FILE, 'r') as f:
-            metadata = json.load(f)
+        metadata = []
+        if os.path.exists(METADATA_FILE):
+            try:
+                with open(METADATA_FILE, 'r') as f:
+                    metadata = json.load(f)
+            except Exception:
+                metadata = []
         
         # 새 항목 추가
         new_item = {
@@ -105,6 +116,9 @@ def save_download_file(zip_data, display_name, original_filename):
         }
         metadata.insert(0, new_item)
         
+        # 최대 20개까지만 유지
+        metadata = metadata[:20]
+        
         # 메타데이터 저장
         with open(METADATA_FILE, 'w') as f:
             json.dump(metadata, f)
@@ -112,7 +126,7 @@ def save_download_file(zip_data, display_name, original_filename):
         return True
         
     except Exception as e:
-        st.warning(f"파일 저장 중 오류: {str(e)}")
+        # 저장 실패해도 앱은 계속 실행
         return False
 
 def get_download_history():
@@ -132,18 +146,21 @@ def get_download_history():
         valid_items = []
         
         for item in metadata:
-            expiry_time = datetime.fromisoformat(item['expiry_time'])
-            if current_time < expiry_time:
-                # 남은 시간 계산
-                remaining = expiry_time - current_time
-                hours_left = int(remaining.total_seconds() // 3600)
-                minutes_left = int((remaining.total_seconds() % 3600) // 60)
-                item['remaining'] = f"{hours_left}시간 {minutes_left}분"
-                valid_items.append(item)
+            try:
+                expiry_time = datetime.fromisoformat(item['expiry_time'])
+                if current_time < expiry_time:
+                    # 남은 시간 계산
+                    remaining = expiry_time - current_time
+                    hours_left = int(remaining.total_seconds() // 3600)
+                    minutes_left = int((remaining.total_seconds() % 3600) // 60)
+                    item['remaining'] = f"{hours_left}시간 {minutes_left}분"
+                    valid_items.append(item)
+            except Exception:
+                continue
         
         return valid_items
         
-    except Exception as e:
+    except Exception:
         return []
 
 def get_download_file(file_id):
@@ -154,7 +171,7 @@ def get_download_file(file_id):
             with open(file_path, 'rb') as f:
                 return f.read()
         return None
-    except:
+    except Exception:
         return None
 
 # 세션 상태 초기화
