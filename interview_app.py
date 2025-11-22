@@ -42,7 +42,7 @@ def get_kst_now():
     return datetime.now(KST)
 
 # ============================================
-# CSS 스타일 - 사이드바 완전 숨김 + 모바일 최적화 추가
+# CSS 스타일 - 사이드바 완전 숨김 + 미니멀 디자인
 # ============================================
 st.markdown("""
 <style>
@@ -70,58 +70,6 @@ st.markdown("""
 .stFileUploader > div {
     padding: 0.5rem;
 }
-
-/* 모바일 반응형 CSS */
-@media (max-width: 768px) {
-    .stApp {
-        padding: 0.5rem;
-    }
-    
-    .stButton > button {
-        width: 100%;
-        padding: 0.75rem;
-        font-size: 1rem;
-    }
-    
-    .stTextArea textarea {
-        font-size: 16px !important; /* iOS 확대 방지 */
-    }
-    
-    .stTextInput input {
-        font-size: 16px !important;
-    }
-    
-    h1 {
-        font-size: 1.5rem !important;
-    }
-    
-    h2 {
-        font-size: 1.25rem !important;
-    }
-    
-    h3 {
-        font-size: 1.1rem !important;
-    }
-    
-    /* 파일 업로더 터치 영역 확대 */
-    .stFileUploader {
-        padding: 1rem;
-    }
-    
-    .stFileUploader label {
-        font-size: 0.9rem;
-    }
-    
-    /* 체크박스 터치 영역 확대 */
-    .stCheckbox {
-        padding: 0.5rem 0;
-    }
-    
-    /* 진행 바 */
-    .stProgress > div {
-        height: 8px;
-    }
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -139,28 +87,6 @@ EXPIRY_HOURS = 24
 DOCX_FONT_NAME = 'LG스마트체 Regular'
 ADMIN_EMAIL_BCC = "dskam@lgbr.co.kr"
 USD_TO_KRW = 1400
-
-# ============================================
-# 프롬프트 로드 함수
-# ============================================
-def load_prompts():
-    """secrets에서 프롬프트 로드"""
-    transcript_prompt = None
-    summary_prompt = None
-    
-    try:
-        transcript_prompt = st.secrets.get("transcript_prompt", "")
-        summary_prompt = st.secrets.get("summary_prompt", "")
-        
-        if not transcript_prompt:
-            st.error("⚠️ transcript_prompt가 secrets에 없습니다")
-        if not summary_prompt:
-            st.error("⚠️ summary_prompt가 secrets에 없습니다")
-            
-    except Exception as e:
-        st.error(f"Secrets 읽기 오류: {str(e)}")
-    
-    return transcript_prompt, summary_prompt
 
 # ============================================
 # 사용량 관리
@@ -401,33 +327,18 @@ def transcribe_audio(audio_file, task="transcribe", model="whisper-1"):
 # ============================================
 def process_with_claude(content, prompt, task_name):
     try:
-        if not prompt:
-            st.error(f"프롬프트가 없습니다 - {task_name}")
-            return None, 0, 0
-            
-        if not content:
-            st.error(f"처리할 콘텐츠가 없습니다 - {task_name}")
-            return None, 0, 0
-        
         api_key = st.secrets.get("ANTHROPIC_API_KEY")
         if not api_key:
-            st.error("ANTHROPIC_API_KEY가 없습니다")
             return None, 0, 0
-            
         client = anthropic.Anthropic(api_key=api_key)
-        
-        # Claude Sonnet 4.5 모델 사용
         message = client.messages.create(
-            model="claude-sonnet-4-5-20250929",  # Sonnet 4.5 모델
+            model="claude-sonnet-4-20250514",
             max_tokens=16000,
             temperature=0,
             messages=[{"role": "user", "content": f"{prompt}\n\n# 처리할 인터뷰 내용:\n\n{content}"}]
         )
-        
         return message.content[0].text, message.usage.input_tokens, message.usage.output_tokens
-        
-    except Exception as e:
-        st.error(f"Claude 오류 - {task_name}: {str(e)}")
+    except:
         return None, 0, 0
 
 # ============================================
@@ -613,27 +524,27 @@ def calculate_costs(audio_min=0, in_tok=0, out_tok=0, stt_model="whisper-1"):
     return {'total_krw': total_krw, 'stt_usd': stt_cost, 'claude_usd': claude}
 
 def generate_email_body(results, files, file_type, do_transcript, do_summary, out_md, out_docx, out_txt, minutes, seconds, costs):
-    """트리 구조의 이메일 본문 생성"""
+    """상세한 이메일 본문 생성"""
     is_audio = file_type == 'audio'
+    file_type_label = "음성" if is_audio else "텍스트"
     
     # 입력 파일 목록
     input_list = []
     for idx, f in enumerate(files, 1):
-        input_list.append(f"{idx}. {f.name}")
+        input_list.append(f"{idx}. {f.name} ({file_type_label})")
     input_section = "\n".join(input_list)
     
-    # 출력 파일 목록 (트리 구조)
+    # 출력 파일 목록
     output_list = []
     for idx, r in enumerate(results, 1):
         base = r['base_name']
-        lines = [f"{idx}. {r['filename']}"]
-        tree_items = []
+        lines = [f"{idx}. {r['filename']} ({file_type_label})"]
         
         # 녹취 원본 (음성인 경우)
         if r.get('whisper'):
-            tree_items.append(f"녹취(원본): {base}_whisper.txt")
+            lines.append(f"   - 녹취(원본): {base}_whisper.txt")
         
-        # 트랜스크립트
+        # 트랜스크립트/노트정리
         if r.get('transcript'):
             formats = []
             if out_docx:
@@ -643,7 +554,8 @@ def generate_email_body(results, files, file_type, do_transcript, do_summary, ou
             if out_txt:
                 formats.append(f"{base}.txt")
             if formats:
-                tree_items.append(f"트랜스크립트: {', '.join(formats)}")
+                label = "녹취(번역/정리)" if is_audio else "트랜스크립트"
+                lines.append(f"   - {label}: {', '.join(formats)}")
         
         # 요약
         if r.get('summary'):
@@ -655,43 +567,38 @@ def generate_email_body(results, files, file_type, do_transcript, do_summary, ou
             if out_txt:
                 formats.append(f"#{base}.txt")
             if formats:
-                tree_items.append(f"요약: {', '.join(formats)}")
-        
-        # 트리 구조로 표시
-        for i, item in enumerate(tree_items):
-            if i < len(tree_items) - 1:
-                lines.append(f"   ├─ {item}")
-            else:
-                lines.append(f"   └─ {item}")
+                lines.append(f"   - 요약: {', '.join(formats)}")
         
         output_list.append("\n".join(lines))
     
-    output_section = "\n\n".join(output_list)
+    output_section = "\n".join(output_list)
     
-    # 현재 날짜/시간 (KST)
-    now = get_kst_now()
-    date_str = now.strftime("%Y. %m/%d (%H:%M)")
+    # 작업 내용 설명
+    tasks = []
+    if is_audio:
+        tasks.append("받아쓰기")
+    if do_transcript:
+        tasks.append("번역" if is_audio else "정리")
+    if do_summary:
+        tasks.append("요약")
+    task_desc = ", ".join(tasks) if tasks else "정리"
     
     body = f"""안녕하세요! 캐피입니다 😊
 인터뷰 정리 결과를 보내드립니다.
 
-✔️ 다음 파일들을 제게 주셨어요 ({len(files)}개)
-─────────────────────────────
+📄 다음 파일들을 제게 주셨어요 ({len(files)}개)
+─────────────────────────────────────────────────
 {input_section}
 
-✔️ 주신 파일별로 정리, 요약를 했습니다
-─────────────────────────────
+✅ 주신 파일별로 {task_desc}를 했습니다
+─────────────────────────────────────────────────
 {output_section}
 
 ※ 첨부파일을 확인해주세요!
 
-열심히 하고 있는데 그래도 이 만큼 걸리네요.
-( 소요 시간/비용: {minutes}분 {seconds}초 / 약 {costs['total_krw']:,.0f}원 )
-
-오늘도 좋은 하루 되세요 😃
-캐피가 드립니다.
-
-{date_str}
+💰 열심히 하고 있는데 그래도 이 만큼 걸리네요 ⏱️
+─────────────────────────────────────────────────
+• 소요 시간/비용: {minutes}분 {seconds}초 / 약 {costs['total_krw']:,.0f}원
 """
     return body
 
@@ -721,54 +628,9 @@ def check_password():
 # 메인 앱
 # ============================================
 def main():
-    # 세션 정리 체크
-    if st.session_state.get('clear_session', False):
-        # clear_session 플래그가 있으면 모든 proc_ 관련 키와 processing 삭제
-        keys_to_delete = [key for key in st.session_state.keys() 
-                         if key.startswith('proc_') or key in ['processing', 'show_results', 'last_results']]
-        for key in keys_to_delete:
-            del st.session_state[key]
-        st.session_state.clear_session = False
-        st.rerun()
-    
-    # 결과 표시 모드 체크
-    if st.session_state.get('show_results', False) and not st.session_state.get('processing', False):
-        # 저장된 결과 표시
-        if 'last_results' in st.session_state:
-            last = st.session_state.last_results
-            st.markdown("# 😊 캐피 인터뷰")
-            st.markdown("작업 완료된 결과입니다.")
-            st.markdown("---")
-            
-            st.success(f"✅ 완료! {', '.join(last['emails'])}로 결과를 보냈어요.")
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("⏱️ 소요 시간", f"{last['minutes']}분 {last['seconds']}초")
-            with col2:
-                st.metric("📄 처리 파일", f"{len(last['results'])}개")
-            with col3:
-                st.metric("💰 비용", f"₩{last['costs']['total_krw']:,.0f}")
-            
-            st.download_button(
-                "📦 바로 다운로드",
-                last['zip_data'],
-                last['zip_filename'],
-                "application/zip",
-                key=f"download_result_{int(time.time())}",
-                use_container_width=True
-            )
-            
-            if st.button("🏠 처음으로", use_container_width=True):
-                st.session_state.show_results = False
-                del st.session_state.last_results
-                st.rerun()
-            
-            return
-    
     if not check_password():
         return
-        
+    
     # 헤더 - 진행 상태에 따라 다르게 표시
     st.markdown("# 😊 캐피 인터뷰")
     if st.session_state.get('processing', False):
@@ -777,12 +639,12 @@ def main():
         st.markdown("인터뷰를 정리하는 캐피입니다. 음원/텍스트를 올려주세요! 📎")
     
     # 프롬프트 로드
-    transcript_prompt, summary_prompt = load_prompts()
-    
-    # 프롬프트가 없으면 경고
-    if not transcript_prompt and not summary_prompt:
-        st.error("⚠️ 프롬프트가 설정되지 않았습니다. 관리자에게 문의하세요.")
-        return
+    try:
+        transcript_prompt = st.secrets.get("transcript_prompt", "")
+        summary_prompt = st.secrets.get("summary_prompt", "")
+    except:
+        transcript_prompt = ""
+        summary_prompt = ""
     
     st.markdown("---")
     
@@ -887,8 +749,6 @@ def main():
                         st.session_state.proc_out_txt = out_txt
                         st.session_state.proc_emails = emails
                         st.session_state.proc_stt_model = stt_model
-                        st.session_state.proc_transcript_prompt = transcript_prompt
-                        st.session_state.proc_summary_prompt = summary_prompt
                         st.rerun()
     
     # ========== 진행 UI ==========
@@ -903,8 +763,6 @@ def main():
         out_txt = st.session_state.proc_out_txt
         emails = st.session_state.proc_emails
         stt_model = st.session_state.get('proc_stt_model', 'whisper-1')
-        transcript_prompt = st.session_state.get('proc_transcript_prompt')
-        summary_prompt = st.session_state.get('proc_summary_prompt')
         
         # 진행 단계 정의
         if is_audio:
@@ -1069,16 +927,14 @@ def main():
             body = generate_email_body(results, files, file_type, do_transcript, do_summary, 
                                        out_md, out_docx, out_txt, minutes, seconds, costs)
             
-            # 이메일 제목 생성 - 첫 번째 파일명 사용
-            email_subject = f"인터뷰 정리가 도착했어요 - {results[0]['filename'].rsplit('.', 1)[0] if results else 'interview'}"
-            
-            email_success, _ = send_email(emails, email_subject, body, [(zip_filename, zip_data)])
+            email_success, _ = send_email(emails, f"[캐피 인터뷰] 인터뷰 정리 결과 - {get_kst_now().strftime('%Y-%m-%d')}", body, [(zip_filename, zip_data)])
             
             # 완료 표시
             with progress_placeholder.container():
                 show_steps(len(steps))  # 모든 단계 완료
             status_placeholder.empty()
-
+            st.session_state.processing = False
+            
             # 완료 메시지
             st.success(f"✅ 완료! {', '.join(emails)}로 결과를 보냈어요.")
             
@@ -1090,41 +946,32 @@ def main():
             with col3:
                 st.metric("💰 비용", f"₩{costs['total_krw']:,.0f}")
             
-            # 다운로드 버튼 - key에 고유값 추가하여 재실행 방지
             st.download_button(
                 "📦 바로 다운로드",
                 zip_data,
                 zip_filename,
                 "application/zip",
-                key=f"download_{zip_filename}_{int(time.time())}",  # 고유 키 사용
                 use_container_width=True
             )
             
-            # 새 작업 버튼
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("🔄 새 작업 시작", key="new_task", use_container_width=True):
-                    # 세션 정리를 위한 플래그 설정
-                    st.session_state.clear_session = True
-                    st.rerun()
-            
-            with col2:
-                # 현재 페이지에 머물기 버튼 추가
-                if st.button("📋 현재 결과 유지", key="stay_here", use_container_width=True):
-                    # processing을 False로 설정하지만 결과는 유지
-                    st.session_state.processing = False
-                    st.session_state.show_results = True
-                    st.session_state.last_results = {
-                        'zip_data': zip_data,
-                        'zip_filename': zip_filename,
-                        'results': results,
-                        'minutes': minutes,
-                        'seconds': seconds,
-                        'costs': costs,
-                        'emails': emails
-                    }
-                    st.rerun()
- 
+	# 새 작업 버튼 - 더 간단하게
+	if st.button("🔄 새 작업 시작", use_container_width=True):
+    		# proc_ 관련 세션 상태만 삭제
+    		for key in list(st.session_state.keys()):
+        		if key.startswith('proc_'):
+            			del st.session_state[key]
+    		st.rerun()
+        else:
+            status_placeholder.empty()
+            st.error("❌ 파일 처리에 실패했어요. 다시 시도해주세요.")
+            if st.button("🔄 다시 시도", use_container_width=True):
+                for key in list(st.session_state.keys()):
+                    if key.startswith('proc_') or key == 'processing':
+                        del st.session_state[key]
+                st.rerun()
+        
+        return  # 진행 중일 때는 여기서 종료
+    
     # 기존 작업물 다운로드 (진행 중이 아닐 때만)
     if not st.session_state.get('processing', False):
         st.markdown("---")
