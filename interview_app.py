@@ -31,13 +31,18 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="collapsed",
 )
-
 st.markdown("""
 <style>
     [data-testid="stDownloadButton"] button {
         font-size: 10pt;
         padding: 0.2rem 0.4rem;
         min-height: 0;
+        background: none;
+        border: none;
+    }
+    [data-testid="stDownloadButton"] button:hover {
+        background: none;
+        border: none;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -51,7 +56,6 @@ KST = timezone(timedelta(hours=9))
 def get_kst_now():
     """한국 표준시 현재 시간 반환"""
     return datetime.now(KST)
-
 
 # ============================================
 # CSS 스타일 - 사이드바 완전 숨김 + 미니멀 디자인
