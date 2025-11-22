@@ -749,11 +749,11 @@ def main():
         return
 
     # 헤더 - 진행 상태에 따라 다르게 표시
-    st.markdown("## 😊 캐피 인터뷰")
+    st.markdown("### 😊 캐피 인터뷰")
     if st.session_state.get("processing", False):
         st.markdown("꼼꼼하게 정리해 볼게요! 기대해 주세요 📎")
     else:
-        st.markdown("인터뷰를 정리하는 캐피입니다. 음원/텍스트를 올려주세요! 📎")
+        st.markdown("인터뷰를 정리하는 캐피입니다. 퇴근하실 때 작업을 시작하고 창을 열어두면 아침에 메일로 받아 보실 수 있어요. \n 음원/텍스트를 올려주세요!")
 
     # 프롬프트 로드
     try:
