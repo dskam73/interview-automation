@@ -832,7 +832,7 @@ def main():
                     
                     if st.button("🚀 시작", type="primary", use_container_width=True, disabled=not can_start):
                         # 세션에 작업 정보 저장
-                        st.session_state.processing = True
+                        st.session_state.processing = False
                         st.session_state.proc_files = files
                         st.session_state.proc_file_type = file_type
                         st.session_state.proc_do_transcript = do_transcript
@@ -1056,7 +1056,7 @@ def main():
             # 새 작업 버튼
             if st.button("🔄 새 작업 시작", use_container_width=True):
                 for key in list(st.session_state.keys()):
-                    if key.startswith('proc_') or key == 'processing':
+                    if key.startswith('proc_'):
                         del st.session_state[key]
                 st.rerun()
         else:
