@@ -726,11 +726,11 @@ def check_password():
             st.session_state["auth"] = False
 
     if "auth" not in st.session_state:
-        st.markdown("## 🔐 접근 제한")
+        st.markdown("## 🔐 캐피 친구는 들어올 수 있어요")
         st.text_input("비밀번호", type="password", on_change=entered, key="pw")
         return False
     elif not st.session_state["auth"]:
-        st.markdown("## 🔐 접근 제한")
+        st.markdown("## 🔐 캐피 친구는 들어올 수 있어요")
         st.text_input("비밀번호", type="password", on_change=entered, key="pw")
         st.error("❌ 비밀번호가 틀렸습니다.")
         return False
