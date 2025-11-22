@@ -956,20 +956,12 @@ def main():
             
 	# 새 작업 버튼 - 더 간단하게
 	if st.button("🔄 새 작업 시작", use_container_width=True):
-    		# proc_ 관련 세션 상태만 삭제
-    		for key in list(st.session_state.keys()):
-        		if key.startswith('proc_'):
-            			del st.session_state[key]
-    		st.rerun()
-        else:
-            status_placeholder.empty()
-            st.error("❌ 파일 처리에 실패했어요. 다시 시도해주세요.")
-            if st.button("🔄 다시 시도", use_container_width=True):
-                for key in list(st.session_state.keys()):
-                    if key.startswith('proc_') or key == 'processing':
-                        del st.session_state[key]
-                st.rerun()
-    
+        # proc_ 관련 세션 상태만 삭제
+    	for key in list(st.session_state.keys()):
+        	if key.startswith('proc_'):
+           		del st.session_state[key]
+    	st.rerun()
+		
     # 기존 작업물 다운로드 (진행 중이 아닐 때만)
     if not st.session_state.get('processing', False):
         st.markdown("---")
