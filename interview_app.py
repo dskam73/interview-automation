@@ -325,7 +325,7 @@ def split_audio_file(audio_file, max_size_mb=20):
         return None
 
 
-def transcribe_audio(audio_file, task="transcribe", model="whisper-1"):
+def transcribe_audio(audio_file, task="transcribe"):
     try:
         api_key = st.secrets.get("OPENAI_API_KEY")
         if not api_key:
@@ -333,9 +333,8 @@ def transcribe_audio(audio_file, task="transcribe", model="whisper-1"):
         client = openai.OpenAI(api_key=api_key)
         file_size_mb = audio_file.size / (1024 * 1024)
 
-        # 번역은 whisper-1만 지원
-        if task == "translate":
-            model = "whisper-1"
+        # Whisper-1 모델만 사용
+        model = "whisper-1"
 
         if file_size_mb > MAX_FILE_SIZE_MB:
             chunks = split_audio_file(audio_file, MAX_FILE_SIZE_MB)
@@ -349,7 +348,7 @@ def transcribe_audio(audio_file, task="transcribe", model="whisper-1"):
                 try:
                     if task == "translate":
                         result = client.audio.translations.create(
-                            model="whisper-1",
+                            model=model,
                             file=("chunk.mp3", chunk["data"], "audio/mpeg"),
                         )
                     else:
@@ -371,9 +370,7 @@ def transcribe_audio(audio_file, task="transcribe", model="whisper-1"):
 
             with open(tmp_path, "rb") as f:
                 if task == "translate":
-                    result = client.audio.translations.create(
-                        model="whisper-1", file=f
-                    )
+                    result = client.audio.translations.create(model=model, file=f)
                 else:
                     result = client.audio.transcriptions.create(model=model, file=f)
             os.unlink(tmp_path)
@@ -612,16 +609,9 @@ def send_email(to_emails, subject, body, attachments=None):
         return False, str(e)
 
 
-def calculate_costs(audio_min=0, in_tok=0, out_tok=0, stt_model="whisper-1"):
-    # 모델별 분당 요금
-    stt_rates = {
-        "whisper-1": 0.006,
-        "gpt-4o-transcribe": 0.006,
-        "gpt-4o-mini-transcribe": 0.003,
-    }
-    stt_rate = stt_rates.get(stt_model, 0.006)
-
-    stt_cost = audio_min * stt_rate
+def calculate_costs(audio_min=0, in_tok=0, out_tok=0):
+    # Whisper 고정 요금
+    stt_cost = audio_min * 0.006
     claude = (in_tok / 1_000_000) * 3.0 + (out_tok / 1_000_000) * 15.0
     total_krw = (stt_cost + claude) * USD_TO_KRW
     return {"total_krw": total_krw, "stt_usd": stt_cost, "claude_usd": claude}
@@ -640,27 +630,22 @@ def generate_email_body(
     seconds,
     costs,
 ):
-    """상세한 이메일 본문 생성"""
+    """트리 구조를 활용한 심플하고 위계적인 이메일 본문 생성"""
     is_audio = file_type == "audio"
-    file_type_label = "음성" if is_audio else "텍스트"
-
-    # 입력 파일 목록
-    input_list = []
-    for idx, f in enumerate(files, 1):
-        input_list.append(f"{idx}. {f.name} ({file_type_label})")
-    input_section = "\n".join(input_list)
-
-    # 출력 파일 목록
+    
+    # 출력 파일 목록 (트리 구조)
     output_list = []
     for idx, r in enumerate(results, 1):
         base = r["base_name"]
-        lines = [f"{idx}. {r['filename']} ({file_type_label})"]
-
+        lines = [f"{idx}. {r['filename']}"]
+        
+        tree_items = []
+        
         # 녹취 원본 (음성인 경우)
         if r.get("whisper"):
-            lines.append(f"   - 녹취(원본): {base}_whisper.txt")
-
-        # 트랜스크립트/노트정리
+            tree_items.append(f"녹취(원본): {base}_whisper.txt")
+        
+        # 트랜스크립트
         if r.get("transcript"):
             formats = []
             if out_docx:
@@ -670,9 +655,8 @@ def generate_email_body(
             if out_txt:
                 formats.append(f"{base}.txt")
             if formats:
-                label = "녹취(번역/정리)" if is_audio else "트랜스크립트"
-                lines.append(f"   - {label}: {', '.join(formats)}")
-
+                tree_items.append(f"트랜스크립트: {', '.join(formats)}")
+        
         # 요약
         if r.get("summary"):
             formats = []
@@ -683,38 +667,49 @@ def generate_email_body(
             if out_txt:
                 formats.append(f"#{base}.txt")
             if formats:
-                lines.append(f"   - 요약: {', '.join(formats)}")
-
+                tree_items.append(f"요약: {', '.join(formats)}")
+        
+        # 트리 구조로 표시
+        for i, item in enumerate(tree_items):
+            if i < len(tree_items) - 1:
+                lines.append(f" ├─ {item}")
+            else:
+                lines.append(f" └─ {item}")
+        
         output_list.append("\n".join(lines))
-
-    output_section = "\n".join(output_list)
-
+    
+    output_section = "\n\n".join(output_list)
+    
     # 작업 내용 설명
     tasks = []
     if is_audio:
         tasks.append("받아쓰기")
     if do_transcript:
-        tasks.append("번역" if is_audio else "정리")
+        tasks.append("번역/정리")
     if do_summary:
         tasks.append("요약")
     task_desc = ", ".join(tasks) if tasks else "정리"
-
+    
+    # 현재 시간
+    now = get_kst_now()
+    date_str = now.strftime("%Y. %m/%d (%H:%M)")
+    
     body = f"""안녕하세요! 캐피입니다 😊
-인터뷰 정리 결과를 보내드립니다.
 
-📄 다음 파일들을 제게 주셨어요 ({len(files)}개)
-─────────────────────────────────────────────────
-{input_section}
+[인터뷰 정리 결과]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-✅ 주신 파일별로 {task_desc}를 했습니다
-─────────────────────────────────────────────────
 {output_section}
 
-※ 첨부파일을 확인해주세요!
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+처리: {len(files)}개 파일 ({task_desc})
+시간: {minutes}분 {seconds}초
+비용: 약 {costs['total_krw']:,.0f}원
 
-💰 열심히 하고 있는데 그래도 이 만큼 걸리네요 ⏱️
-─────────────────────────────────────────────────
-• 소요 시간/비용: {minutes}분 {seconds}초 / 약 {costs['total_krw']:,.0f}원
+{date_str}
+캐피 올림
+
+※ 모든 파일은 첨부파일에서 확인하실 수 있습니다.
 """
     return body
 
@@ -829,28 +824,6 @@ def main():
                         out_docx = st.checkbox("Word", value=True)
                         out_txt = st.checkbox("Text", value=False)
 
-                    # 음성 파일일 때 모델 선택 옵션
-                    if is_audio:
-                        st.markdown("---")
-                        st.markdown("**🎤 음성 인식 모델**")
-                        stt_model = st.radio(
-                            "음성 인식 모델 선택",
-                            options=[
-                                "gpt-4o-transcribe",
-                                "whisper-1",
-                                "gpt-4o-mini-transcribe",
-                            ],
-                            format_func=lambda x: {
-                                "gpt-4o-transcribe": "GPT-4o ($0.006/분) - 최고 정확도, 환각 감소",
-                                "whisper-1": "Whisper ($0.006/분) - 안정적, 타임스탬프 지원",
-                                "gpt-4o-mini-transcribe": "GPT-4o Mini ($0.003/분) - 50% 저렴, 빠름",
-                            }[x],
-                            index=0,
-                            label_visibility="collapsed",
-                        )
-                    else:
-                        stt_model = "whisper-1"  # 텍스트 파일은 해당 없음
-
                     st.markdown("---")
 
                     # 이메일 입력 (필수)
@@ -893,7 +866,6 @@ def main():
                         st.session_state.proc_out_docx = out_docx
                         st.session_state.proc_out_txt = out_txt
                         st.session_state.proc_emails = emails
-                        st.session_state.proc_stt_model = stt_model
                         st.rerun()
 
     # ========== 진행 UI ==========
@@ -907,7 +879,6 @@ def main():
         out_docx = st.session_state.proc_out_docx
         out_txt = st.session_state.proc_out_txt
         emails = st.session_state.proc_emails
-        stt_model = st.session_state.get("proc_stt_model", "whisper-1")
 
         # 진행 단계 정의
         if is_audio:
@@ -973,6 +944,9 @@ def main():
         total_out_tok = 0
         start_time = time.time()
 
+        # 모든 첨부파일을 담을 리스트
+        all_attachments = []
+
         for idx, f in enumerate(files):
             base_name = f.name.rsplit(".", 1)[0]
             result = {
@@ -991,7 +965,7 @@ def main():
             )
 
             if is_audio:
-                text, duration = transcribe_audio(f, model=stt_model)
+                text, duration = transcribe_audio(f)
                 total_audio_min += (duration or 0) / 60
                 result["whisper"] = text
                 source_text = text
@@ -1038,6 +1012,32 @@ def main():
 
             results.append(result)
 
+            # 개별 파일들을 첨부파일 리스트에 추가
+            if result.get("whisper"):
+                all_attachments.append((f"{base_name}_whisper.txt", result["whisper"].encode("utf-8")))
+            
+            if result.get("transcript"):
+                if out_md:
+                    all_attachments.append((f"{base_name}.md", result["transcript"].encode("utf-8")))
+                if out_docx:
+                    docx = create_docx(result["transcript"], base_name)
+                    all_attachments.append((f"{base_name}.docx", docx.read()))
+                if out_txt:
+                    plain = re.sub(r"[#*_\-]+", "", result["transcript"])
+                    plain = re.sub(r"\n{3,}", "\n\n", plain)
+                    all_attachments.append((f"{base_name}.txt", plain.encode("utf-8")))
+            
+            if result.get("summary"):
+                if out_md:
+                    all_attachments.append((f"#{base_name}.md", result["summary"].encode("utf-8")))
+                if out_docx:
+                    docx = create_docx(result["summary"], f"#{base_name}")
+                    all_attachments.append((f"#{base_name}.docx", docx.read()))
+                if out_txt:
+                    plain = re.sub(r"[#*_\-]+", "", result["summary"])
+                    plain = re.sub(r"\n{3,}", "\n\n", plain)
+                    all_attachments.append((f"#{base_name}.txt", plain.encode("utf-8")))
+
         # Step: 파일생성
         file_step_idx = len(steps) - 2
         with progress_placeholder.container():
@@ -1083,6 +1083,9 @@ def main():
 
             zip_buf.seek(0)
             zip_data = zip_buf.getvalue()
+            
+            # ZIP 파일도 첨부파일 리스트에 추가
+            all_attachments.append((zip_filename, zip_data))
 
             # 히스토리 저장
             display = (
@@ -1102,9 +1105,7 @@ def main():
             status_placeholder.caption("📧 이메일 발송 중...")
 
             elapsed = time.time() - start_time
-            costs = calculate_costs(
-                total_audio_min, total_in_tok, total_out_tok, stt_model
-            )
+            costs = calculate_costs(total_audio_min, total_in_tok, total_out_tok)
 
             minutes = int(elapsed // 60)
             seconds = int(elapsed % 60)
@@ -1124,11 +1125,12 @@ def main():
                 costs,
             )
 
+            # 개별 파일들과 ZIP 파일 모두 첨부하여 이메일 발송
             email_success, _ = send_email(
                 emails,
                 f"[캐피 인터뷰] 인터뷰 정리 결과 - {get_kst_now().strftime('%Y-%m-%d')}",
                 body,
-                [(zip_filename, zip_data)],
+                all_attachments,  # 모든 첨부파일 전달
             )
 
             # 완료 표시
