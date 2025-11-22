@@ -32,6 +32,16 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+st.markdown("""
+<style>
+    [data-testid="stDownloadButton"] button {
+        font-size: 10pt;
+        padding: 0.2rem 0.4rem;
+        min-height: 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # ============================================
 # 한국 표준시 (KST) 설정
 # ============================================
@@ -1195,7 +1205,7 @@ def main():
                         )
                     with c2:
                         st.download_button(
-                            "📦",
+                            "⬇️", 
                             data,
                             item["original_filename"],
                             "application/zip",
