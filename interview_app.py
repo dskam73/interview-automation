@@ -471,6 +471,36 @@ def get_download_file(file_id):
         pass
     return None
 
+def get_recent_jobs(limit=10):
+    """최근 작업 목록 조회 (진행 중 + 완료)"""
+    try:
+        jobs = []
+        if os.path.exists(JOBS_DIR):
+            # 모든 작업 파일 조회
+            for filename in os.listdir(JOBS_DIR):
+                if filename.endswith('.json'):
+                    job_id = filename[:-5]  # .json 제거
+                    job_info = get_job_info(job_id)
+                    if job_info:
+                        # 생성 시간 파싱
+                        try:
+                            created_at = datetime.fromisoformat(job_info.get('created_at', ''))
+                            if created_at.tzinfo is None:
+                                created_at = created_at.replace(tzinfo=KST)
+                            
+                            # 24시간 이내 작업만
+                            if (get_kst_now() - created_at).total_seconds() < 86400:
+                                jobs.append(job_info)
+                        except:
+                            continue
+        
+        # 시간 역순 정렬
+        jobs.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+        return jobs[:limit]
+    except Exception as e:
+        print(f"Error getting recent jobs: {e}")
+        return []
+
 def get_audio_duration(file_path):
     try:
         cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", file_path]
@@ -997,12 +1027,13 @@ def main():
                         'job_id': job_id,
                         'files_data': files_data,
                         'file_type': file_type,
+                        'file_count': len(files),  # 파일 개수 추가
+                        'emails': emails,
                         'do_transcript': do_transcript,
                         'do_summary': do_summary,
                         'out_md': out_md,
                         'out_docx': out_docx,
                         'out_txt': out_txt,
-                        'emails': emails,
                         'transcript_prompt': transcript_prompt,
                         'summary_prompt': summary_prompt,
                         'created_at': get_kst_now().isoformat(),
@@ -1037,6 +1068,56 @@ def main():
         st.caption(f"📄 텍스트: {usage.get('text', 0)}/{DAILY_LIMIT_TEXT}개")
 
     st.markdown("### 📥 최근 작업물 (24시간)")
+    
+    # 진행 중인 작업 조회
+    recent_jobs = get_recent_jobs()
+    running_jobs = [job for job in recent_jobs if job.get('status') in ['starting', 'running']]
+    completed_jobs = [job for job in recent_jobs if job.get('status') == 'completed']
+    
+    # 진행 중인 작업 표시
+    if running_jobs:
+        st.markdown("#### 🔄 진행 중인 작업")
+        for job in running_jobs:
+            job_id = job.get('job_id', '')
+            created_at = job.get('created_at', '')
+            current_step = job.get('current_step', '준비 중')
+            progress = job.get('progress', 0)
+            file_count = job.get('file_count', 0)
+            file_type = job.get('file_type', '')
+            emails = job.get('emails', [])
+            
+            # 시간 표시
+            try:
+                created_time = datetime.fromisoformat(created_at)
+                time_str = created_time.strftime("%m/%d %H:%M")
+            except:
+                time_str = ""
+            
+            # 진행 상태 박스
+            with st.container():
+                st.caption(f"🔄 **작업 ID**: {job_id[:8]}... ({time_str})")
+                
+                # 파일 정보와 이메일
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    file_label = "음성" if file_type == "audio" else "텍스트"
+                    st.caption(f"📄 {file_count}개 {file_label} 파일")
+                with col2:
+                    if emails:
+                        st.caption(f"📧 {emails[0].split('@')[0]}...")
+                
+                # 진행 바
+                progress_value = progress / 100.0 if progress else 0
+                st.progress(progress_value)
+                
+                # 현재 단계
+                st.caption(f"🔹 {current_step}")
+                
+                st.markdown("---")
+    
+    # 완료된 작업 (기존 다운로드 히스토리)
+    if history or completed_jobs:
+        st.markdown("#### ✅ 완료된 작업")
     history = get_download_history()
     if history:
         for item in history[:5]:
@@ -1048,7 +1129,7 @@ def main():
                 with c2:
                     st.download_button("📦", data, item["original_filename"], "application/zip", key=item["file_id"])
     else:
-        st.caption("아직 작업물이 없어요. 파일을 올려주시면 열심히 정리해드릴게요! 😊")
+        st.caption("아직 완료된 작업물이 없어요.")
 
 if __name__ == "__main__":
     main()
