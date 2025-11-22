@@ -1182,7 +1182,7 @@ def main():
         with col2:
             st.caption(f"📄 텍스트: {usage.get('text', 0)}/{DAILY_LIMIT_TEXT}개")
 
-        st.markdown("### 📥 최근 작업물 (24시간)")
+        st.markdown("#### 📥 최근 작업물 (24시간)")
         history = get_download_history()
         if history:
             for item in history[:5]:
