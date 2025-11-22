@@ -343,7 +343,6 @@ def process_in_background(job_id, job_info):
 # ============================================
 # 기존 함수들은 그대로 유지 (사용량 관리, 파일 처리 등)
 # ============================================
-# [이하 기존 함수들 생략 - 동일하게 유지]
 
 def get_daily_usage():
     try:
@@ -1115,10 +1114,12 @@ def main():
                 
                 st.markdown("---")
     
-    # 완료된 작업 (기존 다운로드 히스토리)
-    if history or completed_jobs:
+    # 완료된 작업 (기존 다운로드 히스토리) - 수정된 부분
+    history = get_download_history()  # ← 이 줄을 먼저 실행
+    
+    if history or completed_jobs:  # ← 이제 history가 정의된 상태
         st.markdown("#### ✅ 완료된 작업")
-    history = get_download_history()
+    
     if history:
         for item in history[:5]:
             data = get_download_file(item["file_id"])
