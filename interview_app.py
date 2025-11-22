@@ -629,6 +629,7 @@ def generate_email_body(
     results,
     files,
     file_type,
+    do_whisper,
     do_transcript,
     do_summary,
     out_md,
@@ -649,8 +650,8 @@ def generate_email_body(
         
         tree_items = []
         
-        # 녹취 원본 (음성인 경우)
-        if r.get("whisper"):
+        # 녹취 원본 (음성인 경우 + do_whisper 체크된 경우)
+        if r.get("whisper") and do_whisper:
             tree_items.append(f"녹취(원본): {base}_whisper.txt")
         
         # 트랜스크립트
@@ -825,16 +826,18 @@ def main():
                     with col1:
                         st.markdown("**📝 정리 옵션**")
                         if is_audio:
-                            do_transcript = st.checkbox("노트 정리", value=True)
+                            do_whisper = st.checkbox("원어 받아쓰기", value=True)
+                            do_transcript = st.checkbox("번역/노트정리", value=True)
                         else:
-                            do_transcript = st.checkbox("풀 트랜스크립트", value=True)
-                        do_summary = st.checkbox("요약문 작성", value=False)
+                            do_whisper = False  # 텍스트 파일은 받아쓰기 불필요
+                            do_transcript = st.checkbox("번역/노트정리", value=True)
+                        do_summary = st.checkbox("요약문 작성", value=True)
 
                     with col2:
                         st.markdown("**📁 출력 형식**")
                         out_md = st.checkbox("Markdown", value=True)
                         out_docx = st.checkbox("Word", value=True)
-                        out_txt = st.checkbox("Text", value=False)
+                        out_txt = st.checkbox("Text", value=True)
 
                     st.markdown("---")
 
@@ -872,6 +875,7 @@ def main():
                         st.session_state.processing = True
                         st.session_state.proc_files = files
                         st.session_state.proc_file_type = file_type
+                        st.session_state.proc_do_whisper = do_whisper
                         st.session_state.proc_do_transcript = do_transcript
                         st.session_state.proc_do_summary = do_summary
                         st.session_state.proc_out_md = out_md
@@ -885,6 +889,7 @@ def main():
         files = st.session_state.proc_files
         file_type = st.session_state.proc_file_type
         is_audio = file_type == "audio"
+        do_whisper = st.session_state.get('proc_do_whisper', True)
         do_transcript = st.session_state.proc_do_transcript
         do_summary = st.session_state.proc_do_summary
         out_md = st.session_state.proc_out_md
@@ -1025,7 +1030,7 @@ def main():
             results.append(result)
 
             # 개별 파일들을 첨부파일 리스트에 추가
-            if result.get("whisper"):
+            if result.get("whisper") and do_whisper:
                 all_attachments.append((f"{base_name}_whisper.txt", result["whisper"].encode("utf-8")))
             
             if result.get("transcript"):
@@ -1066,7 +1071,7 @@ def main():
                 for r in results:
                     base = r["base_name"]
 
-                    if r.get("whisper"):
+                    if r.get("whisper") and do_whisper:
                         zf.writestr(f"{base}_whisper.txt", r["whisper"])
 
                     if r.get("transcript"):
@@ -1127,6 +1132,7 @@ def main():
                 results,
                 files,
                 file_type,
+                do_whisper,
                 do_transcript,
                 do_summary,
                 out_md,
