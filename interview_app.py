@@ -96,25 +96,37 @@ ADMIN_EMAIL_BCC = "dskam@lgbr.co.kr"
 USD_TO_KRW = 1400
 
 # 작업 디렉토리 생성
-os.makedirs(JOBS_DIR, exist_ok=True)
+try:
+    os.makedirs(JOBS_DIR, exist_ok=True)
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+except Exception as e:
+    print(f"Error creating directories: {e}")
 
 # ============================================
 # 작업 관리 함수
 # ============================================
 def save_job_info(job_id, job_data):
     """작업 정보를 파일로 저장"""
-    job_file = os.path.join(JOBS_DIR, f"{job_id}.json")
-    # files_data를 제외한 정보만 저장 (큰 바이너리 데이터는 별도 처리)
-    job_meta = {k: v for k, v in job_data.items() if k != 'files_data'}
-    with open(job_file, 'w') as f:
-        json.dump(job_meta, f)
+    try:
+        job_file = os.path.join(JOBS_DIR, f"{job_id}.json")
+        # files_data를 제외한 정보만 저장 (큰 바이너리 데이터는 별도 처리)
+        job_meta = {k: v for k, v in job_data.items() if k != 'files_data'}
+        with open(job_file, 'w') as f:
+            json.dump(job_meta, f)
+    except Exception as e:
+        print(f"Error saving job file: {e}")
 
 def get_job_info(job_id):
     """작업 정보 조회"""
     job_file = os.path.join(JOBS_DIR, f"{job_id}.json")
     if os.path.exists(job_file):
-        with open(job_file, 'r') as f:
-            return json.load(f)
+        try:
+            with open(job_file, 'r') as f:
+                content = f.read()
+                if content:  # 파일이 비어있지 않은 경우에만 파싱
+                    return json.loads(content)
+        except Exception as e:
+            print(f"Error reading job file: {e}")
     return None
 
 def update_job_status(job_id, status, progress=None, current_step=None, error=None, result_file=None):
@@ -331,6 +343,8 @@ def process_in_background(job_id, job_info):
 # ============================================
 # 기존 함수들은 그대로 유지 (사용량 관리, 파일 처리 등)
 # ============================================
+# [이하 기존 함수들 생략 - 동일하게 유지]
+
 def get_daily_usage():
     try:
         if not os.path.exists(USAGE_FILE):
