@@ -841,6 +841,18 @@ def main():
 
                     st.markdown("---")
 
+                    # 메일 형식 옵션 추가
+                    st.markdown("**📧 메일 형식**")
+                    email_format = st.radio(
+                        "첨부 파일 형식 선택",
+                        options=["압축파일만", "개별파일만", "개별 + 압축파일 모두"],
+                        index=0,  # 기본값: 압축파일만
+                        label_visibility="collapsed",
+                        horizontal=True
+                    )
+
+                    st.markdown("---")
+
                     # 이메일 입력 (필수)
                     st.markdown("**📧 결과 받을 이메일** (필수)")
                     email_input = st.text_input(
@@ -881,6 +893,7 @@ def main():
                         st.session_state.proc_out_md = out_md
                         st.session_state.proc_out_docx = out_docx
                         st.session_state.proc_out_txt = out_txt
+                        st.session_state.proc_email_format = email_format
                         st.session_state.proc_emails = emails
                         st.rerun()
 
@@ -895,6 +908,7 @@ def main():
         out_md = st.session_state.proc_out_md
         out_docx = st.session_state.proc_out_docx
         out_txt = st.session_state.proc_out_txt
+        email_format = st.session_state.get('proc_email_format', '압축파일만')
         emails = st.session_state.proc_emails
 
         # 진행 단계 정의
@@ -1100,9 +1114,6 @@ def main():
 
             zip_buf.seek(0)
             zip_data = zip_buf.getvalue()
-            
-            # ZIP 파일도 첨부파일 리스트에 추가
-            all_attachments.append((zip_filename, zip_data))
 
             # 히스토리 저장
             display = (
@@ -1149,12 +1160,24 @@ def main():
             else:
                 email_title = f"{results[0]['base_name']} 외 {len(results)-1}개"
 
-            # 개별 파일들과 ZIP 파일 모두 첨부하여 이메일 발송
+            # 메일 형식에 따라 첨부파일 결정
+            final_attachments = []
+            if email_format == "압축파일만":
+                # ZIP 파일만 첨부
+                final_attachments = [(zip_filename, zip_data)]
+            elif email_format == "개별파일만":
+                # 개별 파일들만 첨부
+                final_attachments = all_attachments
+            elif email_format == "개별 + 압축파일 모두":
+                # 개별 파일 + ZIP 파일 모두 첨부
+                final_attachments = all_attachments + [(zip_filename, zip_data)]
+
+            # 이메일 발송
             email_success, _ = send_email(
                 emails,
                 f"인터뷰 정리가 도착했어요 - {email_title}",
                 body,
-                all_attachments,
+                final_attachments,
             )
 
             # 완료 표시
