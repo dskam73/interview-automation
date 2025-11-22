@@ -1137,20 +1137,20 @@ def main():
                 costs,
             )
 
-            # 개별 파일들과 ZIP 파일 모두 첨부하여 이메일 발송
             # 이메일 제목 생성
             if len(results) == 1:
                 email_title = results[0]["base_name"]
             else:
                 email_title = f"{results[0]['base_name']} 외 {len(results)-1}개"
 
-                email_success, _ = send_email(
-                    emails,
-                    f"인터뷰 정리가 도착했어요 - {email_title}",
-                    body,
-                    all_attachments,  # 모든 첨부파일 전달
-                )
-                
+            # 개별 파일들과 ZIP 파일 모두 첨부하여 이메일 발송
+            email_success, _ = send_email(
+                emails,
+                f"인터뷰 정리가 도착했어요 - {email_title}",
+                body,
+                all_attachments,
+            )
+
             # 완료 표시
             with progress_placeholder.container():
                 show_steps(len(steps))  # 모든 단계 완료
