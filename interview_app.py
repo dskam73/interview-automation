@@ -34,15 +34,9 @@ st.set_page_config(
 st.markdown("""
 <style>
     [data-testid="stDownloadButton"] button {
-        font-size: 10pt;
-        padding: 0.2rem 0.4rem;
-        min-height: 0;
-        background: none;
-        border: none;
-    }
-    [data-testid="stDownloadButton"] button:hover {
-        background: none;
-        border: none;
+        all: unset;
+        cursor: pointer;
+        font-size: 14pt;
     }
 </style>
 """, unsafe_allow_html=True)
