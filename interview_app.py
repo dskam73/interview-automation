@@ -969,8 +969,6 @@ def main():
                     if key.startswith('proc_') or key == 'processing':
                         del st.session_state[key]
                 st.rerun()
-        
-        return  # 진행 중일 때는 여기서 종료
     
     # 기존 작업물 다운로드 (진행 중이 아닐 때만)
     if not st.session_state.get('processing', False):
