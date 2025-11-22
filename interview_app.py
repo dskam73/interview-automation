@@ -721,9 +721,54 @@ def check_password():
 # 메인 앱
 # ============================================
 def main():
+    # 세션 정리 체크
+    if st.session_state.get('clear_session', False):
+        # clear_session 플래그가 있으면 모든 proc_ 관련 키와 processing 삭제
+        keys_to_delete = [key for key in st.session_state.keys() 
+                         if key.startswith('proc_') or key in ['processing', 'show_results', 'last_results']]
+        for key in keys_to_delete:
+            del st.session_state[key]
+        st.session_state.clear_session = False
+        st.rerun()
+    
+    # 결과 표시 모드 체크
+    if st.session_state.get('show_results', False) and not st.session_state.get('processing', False):
+        # 저장된 결과 표시
+        if 'last_results' in st.session_state:
+            last = st.session_state.last_results
+            st.markdown("# 😊 캐피 인터뷰")
+            st.markdown("작업 완료된 결과입니다.")
+            st.markdown("---")
+            
+            st.success(f"✅ 완료! {', '.join(last['emails'])}로 결과를 보냈어요.")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("⏱️ 소요 시간", f"{last['minutes']}분 {last['seconds']}초")
+            with col2:
+                st.metric("📄 처리 파일", f"{len(last['results'])}개")
+            with col3:
+                st.metric("💰 비용", f"₩{last['costs']['total_krw']:,.0f}")
+            
+            st.download_button(
+                "📦 바로 다운로드",
+                last['zip_data'],
+                last['zip_filename'],
+                "application/zip",
+                key=f"download_result_{int(time.time())}",
+                use_container_width=True
+            )
+            
+            if st.button("🏠 처음으로", use_container_width=True):
+                st.session_state.show_results = False
+                del st.session_state.last_results
+                st.rerun()
+            
+            return
+    
     if not check_password():
         return
-    
+        
     # 헤더 - 진행 상태에 따라 다르게 표시
     st.markdown("# 😊 캐피 인터뷰")
     if st.session_state.get('processing', False):
@@ -832,7 +877,7 @@ def main():
                     
                     if st.button("🚀 시작", type="primary", use_container_width=True, disabled=not can_start):
                         # 세션에 작업 정보 저장
-                        st.session_state.processing = False
+                        st.session_state.processing = True
                         st.session_state.proc_files = files
                         st.session_state.proc_file_type = file_type
                         st.session_state.proc_do_transcript = do_transcript
@@ -1033,7 +1078,7 @@ def main():
             with progress_placeholder.container():
                 show_steps(len(steps))  # 모든 단계 완료
             status_placeholder.empty()
-            
+
             # 완료 메시지
             st.success(f"✅ 완료! {', '.join(emails)}로 결과를 보냈어요.")
             
@@ -1045,31 +1090,41 @@ def main():
             with col3:
                 st.metric("💰 비용", f"₩{costs['total_krw']:,.0f}")
             
+            # 다운로드 버튼 - key에 고유값 추가하여 재실행 방지
             st.download_button(
                 "📦 바로 다운로드",
                 zip_data,
                 zip_filename,
                 "application/zip",
+                key=f"download_{zip_filename}_{int(time.time())}",  # 고유 키 사용
                 use_container_width=True
             )
             
             # 새 작업 버튼
-            if st.button("🔄 새 작업 시작", use_container_width=True):
-                for key in list(st.session_state.keys()):
-                    if key.startswith('proc_'):
-                        del st.session_state[key]
-                st.rerun()
-        else:
-            status_placeholder.empty()
-            st.error("❌ 파일 처리에 실패했어요. 다시 시도해주세요.")
-            if st.button("🔄 다시 시도", use_container_width=True):
-                for key in list(st.session_state.keys()):
-                    if key.startswith('proc_') or key == 'processing':
-                        del st.session_state[key]
-                st.rerun()
-        
-        return  # 진행 중일 때는 여기서 종료
-    
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🔄 새 작업 시작", key="new_task", use_container_width=True):
+                    # 세션 정리를 위한 플래그 설정
+                    st.session_state.clear_session = True
+                    st.rerun()
+            
+            with col2:
+                # 현재 페이지에 머물기 버튼 추가
+                if st.button("📋 현재 결과 유지", key="stay_here", use_container_width=True):
+                    # processing을 False로 설정하지만 결과는 유지
+                    st.session_state.processing = False
+                    st.session_state.show_results = True
+                    st.session_state.last_results = {
+                        'zip_data': zip_data,
+                        'zip_filename': zip_filename,
+                        'results': results,
+                        'minutes': minutes,
+                        'seconds': seconds,
+                        'costs': costs,
+                        'emails': emails
+                    }
+                    st.rerun()
+ 
     # 기존 작업물 다운로드 (진행 중이 아닐 때만)
     if not st.session_state.get('processing', False):
         st.markdown("---")
