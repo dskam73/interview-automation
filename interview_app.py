@@ -1334,7 +1334,7 @@ def main():
             return  # rerun 전에 return 추가
     
     # 여기서부터는 active_job_id가 없을 때만 실행됨
-    st.markdown("퇴근하실 때 정리를 부탁하고 아침에 메일로 받아 보시면 좋아요")
+    st.markdown("퇴근하실 때 정리를 부탁하고 창을 열어두면 아침에 메일로 받아 보실 수 있어요 ^^*...")
     
     uploaded_files = st.file_uploader(
         "파일 선택",
@@ -1507,17 +1507,17 @@ def main():
                     
                     # spinner 종료 후 즉시 rerun
                     st.rerun()
-        
-        # 최근 작업물 표시 (파일 업로드 여부와 관계없이 항상 표시)
-        show_recent_jobs()
-        
-        st.markdown("---")
-        usage = get_daily_usage()
-        col1, col2 = st.columns(2)
-        with col1:
-            st.caption(f"🎤 음성: {usage.get('audio', 0)}/{DAILY_LIMIT_AUDIO}개")
-        with col2:
-            st.caption(f"📄 텍스트: {usage.get('text', 0)}/{DAILY_LIMIT_TEXT}개")
+    
+    # 최근 작업물 표시 (파일 업로드 여부와 관계없이 항상 표시)
+    show_recent_jobs()
+    
+    st.markdown("---")
+    usage = get_daily_usage()
+    col1, col2 = st.columns(2)
+    with col1:
+        st.caption(f"🎤 음성: {usage.get('audio', 0)}/{DAILY_LIMIT_AUDIO}개")
+    with col2:
+        st.caption(f"📄 텍스트: {usage.get('text', 0)}/{DAILY_LIMIT_TEXT}개")
 
 if __name__ == "__main__":
     main()
