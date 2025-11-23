@@ -858,7 +858,7 @@ def show_progress_ui(job_state):
         st.rerun()
 
 def show_completed_ui(job_state):
-    """완료 화면"""
+    """완료 화면 - 세련된 디자인"""
     st.markdown("---")
     
     steps = ['받아쓰기', '번역정리', '요약', '파일생성', '이메일']
@@ -882,38 +882,128 @@ def show_completed_ui(job_state):
         st.metric("💰 비용", f"₩{total_cost:,.0f}")
     
     st.markdown("---")
-    st.markdown("### 📦 다운로드")
+    
+    # 커스텀 CSS - 세련된 다운로드 버튼
+    st.markdown("""
+    <style>
+    /* 다운로드 섹션 스타일 */
+    .download-section {
+        background: #f8f9fa;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+    }
+    
+    .file-header {
+        font-size: 1rem;
+        font-weight: 600;
+        color: #2c3e50;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .file-icon {
+        font-size: 1.2rem;
+    }
+    
+    /* 다운로드 버튼 그리드 */
+    .download-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 0.75rem;
+        margin-top: 1rem;
+    }
+    
+    /* 개별 버튼 스타일 */
+    div[data-testid="stDownloadButton"] > button {
+        background: white;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 0.6rem 1rem;
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: #495057;
+        transition: all 0.2s ease;
+        width: 100%;
+        height: auto;
+    }
+    
+    div[data-testid="stDownloadButton"] > button:hover {
+        background: #f8f9fa;
+        border-color: #4CAF50;
+        color: #4CAF50;
+        transform: translateY(-1px);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    
+    /* ZIP 다운로드 버튼 */
+    .zip-download > button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border: none;
+        color: white;
+        padding: 1rem;
+        font-size: 1rem;
+        font-weight: 600;
+        border-radius: 12px;
+        transition: all 0.3s ease;
+    }
+    
+    .zip-download > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 16px rgba(102, 126, 234, 0.4);
+    }
+    
+    /* 새 작업 버튼 */
+    .new-task > button {
+        background: white;
+        border: 2px solid #e0e0e0;
+        color: #495057;
+        padding: 0.8rem;
+        font-size: 0.95rem;
+        font-weight: 500;
+        border-radius: 10px;
+    }
+    
+    .new-task > button:hover {
+        border-color: #667eea;
+        color: #667eea;
+        background: #f8f9fa;
+    }
+    </style>
+    """, unsafe_allow_html=True)
     
     job_id = st.session_state.get('active_job_id')
     results_dir = os.path.join(JOB_DIR, job_id, 'results')
     
-    # 개별 파일 다운로드
     results = job_state.get('results', {})
     config = job_state.get('config', {})
     out_md = config.get('out_md', True)
     out_docx = config.get('out_docx', True)
     out_txt = config.get('out_txt', False)
     
+    # 파일별 다운로드 섹션
     for filename, result in results.items():
         base_name = result['base_name']
-        st.markdown(f"**📄 {filename}**")
         
-        cols = st.columns(4)
-        col_idx = 0
+        # 파일 헤더
+        st.markdown(f"""
+        <div class="file-header">
+            <span class="file-icon">📄</span>
+            <span>{filename}</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # 다운로드 버튼들을 그리드로 배치
+        buttons = []
         
         # Whisper 원본
         if result.get('whisper'):
             whisper_file = os.path.join(results_dir, f"{base_name}_whisper.txt")
             if os.path.exists(whisper_file):
                 with open(whisper_file, 'rb') as f:
-                    with cols[col_idx % 4]:
-                        st.download_button(
-                            "원본 TXT",
-                            f.read(),
-                            f"{base_name}_whisper.txt",
-                            key=f"whisper_{base_name}"
-                        )
-                        col_idx += 1
+                    buttons.append(('whisper', '원본 TXT', f.read(), f"{base_name}_whisper.txt"))
         
         # 트랜스크립트
         if result.get('transcript'):
@@ -923,36 +1013,13 @@ def show_completed_ui(job_state):
                     transcript_content = f.read()
                 
                 if out_md:
-                    with cols[col_idx % 4]:
-                        st.download_button(
-                            "정리 MD",
-                            transcript_content,
-                            f"{base_name}.md",
-                            key=f"trans_md_{base_name}"
-                        )
-                        col_idx += 1
-                
+                    buttons.append(('trans_md', '정리 MD', transcript_content.encode('utf-8'), f"{base_name}.md"))
                 if out_docx:
                     docx_data = create_docx(transcript_content, base_name)
-                    with cols[col_idx % 4]:
-                        st.download_button(
-                            "정리 DOCX",
-                            docx_data,
-                            f"{base_name}.docx",
-                            key=f"trans_docx_{base_name}"
-                        )
-                        col_idx += 1
-                
+                    buttons.append(('trans_docx', '정리 DOCX', docx_data, f"{base_name}.docx"))
                 if out_txt:
                     plain = re.sub(r'[#*_\-]+', '', transcript_content)
-                    with cols[col_idx % 4]:
-                        st.download_button(
-                            "정리 TXT",
-                            plain,
-                            f"{base_name}.txt",
-                            key=f"trans_txt_{base_name}"
-                        )
-                        col_idx += 1
+                    buttons.append(('trans_txt', '정리 TXT', plain.encode('utf-8'), f"{base_name}.txt"))
         
         # 요약
         if result.get('summary'):
@@ -962,38 +1029,31 @@ def show_completed_ui(job_state):
                     summary_content = f.read()
                 
                 if out_md:
-                    with cols[col_idx % 4]:
-                        st.download_button(
-                            "요약 MD",
-                            summary_content,
-                            f"#{base_name}.md",
-                            key=f"sum_md_{base_name}"
-                        )
-                        col_idx += 1
-                
+                    buttons.append(('sum_md', '요약 MD', summary_content.encode('utf-8'), f"#{base_name}.md"))
                 if out_docx:
                     docx_data = create_docx(summary_content, f"#{base_name}")
-                    with cols[col_idx % 4]:
-                        st.download_button(
-                            "요약 DOCX",
-                            docx_data,
-                            f"#{base_name}.docx",
-                            key=f"sum_docx_{base_name}"
-                        )
-                        col_idx += 1
-                
+                    buttons.append(('sum_docx', '요약 DOCX', docx_data, f"#{base_name}.docx"))
                 if out_txt:
                     plain = re.sub(r'[#*_\-]+', '', summary_content)
-                    with cols[col_idx % 4]:
-                        st.download_button(
-                            "요약 TXT",
-                            plain,
-                            f"#{base_name}.txt",
-                            key=f"sum_txt_{base_name}"
-                        )
-                        col_idx += 1
+                    buttons.append(('sum_txt', '요약 TXT', plain.encode('utf-8'), f"#{base_name}.txt"))
         
-        st.markdown("---")
+        # 버튼 배치 (최대 4개씩)
+        if buttons:
+            num_cols = min(4, len(buttons))
+            cols = st.columns(num_cols)
+            
+            for idx, (btn_type, label, data, fname) in enumerate(buttons):
+                with cols[idx % num_cols]:
+                    st.download_button(
+                        label,
+                        data,
+                        fname,
+                        key=f"{btn_type}_{base_name}_{idx}"
+                    )
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+    
+    st.markdown("---")
     
     # 전체 ZIP 다운로드
     zip_path = os.path.join(JOB_DIR, job_id, 'output.zip')
@@ -1001,6 +1061,7 @@ def show_completed_ui(job_state):
         with open(zip_path, 'rb') as f:
             zip_data = f.read()
         
+        st.markdown('<div class="zip-download">', unsafe_allow_html=True)
         st.download_button(
             "📦 전체 ZIP 다운로드",
             zip_data,
@@ -1008,10 +1069,16 @@ def show_completed_ui(job_state):
             "application/zip",
             use_container_width=True
         )
+        st.markdown('</div>', unsafe_allow_html=True)
     
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # 새 작업 시작 버튼
+    st.markdown('<div class="new-task">', unsafe_allow_html=True)
     if st.button("🔄 새 작업 시작", use_container_width=True):
         del st.session_state['active_job_id']
         st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 def show_error_ui(job_state):
     """에러 화면"""
