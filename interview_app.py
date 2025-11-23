@@ -59,7 +59,7 @@ st.markdown("""
 # ============================================
 # 설정 상수
 # ============================================
-MAX_FILES_PER_UPLOAD = 5
+MAX_FILES_PER_UPLOAD = 6
 DAILY_LIMIT_AUDIO = 30
 DAILY_LIMIT_TEXT = 30
 MAX_FILE_SIZE_MB = 20
