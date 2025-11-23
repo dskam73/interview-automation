@@ -556,26 +556,14 @@ def calculate_costs(audio_min=0, in_tok=0, out_tok=0, stt_model="whisper-1"):
 # 백그라운드 Job 처리
 # ============================================
 def generate_email_body(files_data, config, elapsed, costs):
-    """이메일 본문 생성 - 기존 형식"""
+    """이메일 본문 생성 - 트리 구조"""
     file_type = config['file_type']
     is_audio = file_type == 'audio'
     do_transcript = config['do_transcript']
     do_summary = config['do_summary']
-    
-    # 파일 목록
-    file_list = ""
-    for idx, f in enumerate(files_data, 1):
-        file_list += f"{idx}. {f['filename']}\n"
-    
-    # 작업 내용
-    tasks = []
-    if is_audio:
-        tasks.append("받아쓰기")
-    if do_transcript:
-        tasks.append("정리")
-    if do_summary:
-        tasks.append("요약")
-    task_str = ", ".join(tasks)
+    out_md = config['out_md']
+    out_docx = config['out_docx']
+    out_txt = config['out_txt']
     
     # 시간
     minutes = int(elapsed // 60)
@@ -585,23 +573,87 @@ def generate_email_body(files_data, config, elapsed, costs):
     now = get_kst_now()
     date_str = now.strftime('%Y. %m/%d (%H:%M)')
     
+    # 작업 설명
+    tasks = []
+    if is_audio:
+        tasks.append("받아쓰기")
+    if do_transcript:
+        tasks.append("번역/정리" if is_audio else "정리")
+    if do_summary:
+        tasks.append("요약")
+    
+    # 파일별 트리 구조 생성
+    file_trees = []
+    for idx, f in enumerate(files_data, 1):
+        filename = f['filename']
+        base_name = filename.rsplit('.', 1)[0] if '.' in filename else filename
+        
+        lines = [f"{idx}. {filename}"]
+        items = []
+        
+        # 녹취(원본)
+        if is_audio:
+            items.append(f"녹취(원본): {base_name}_whisper.txt")
+        
+        # 트랜스크립트
+        if do_transcript:
+            formats = []
+            if out_docx:
+                formats.append(f"{base_name}.docx")
+            if out_md:
+                formats.append(f"{base_name}.md")
+            if out_txt:
+                formats.append(f"{base_name}.txt")
+            
+            if formats:
+                label = "트랜스크립트" if not is_audio else "녹취(번역/정리)"
+                items.append(f"{label}: {', '.join(formats)}")
+        
+        # 요약
+        if do_summary:
+            formats = []
+            if out_docx:
+                formats.append(f"#{base_name}.docx")
+            if out_md:
+                formats.append(f"#{base_name}.md")
+            if out_txt:
+                formats.append(f"#{base_name}.txt")
+            
+            if formats:
+                items.append(f"요약: {', '.join(formats)}")
+        
+        # 트리 구조로 조합
+        for i, item in enumerate(items):
+            if i < len(items) - 1:
+                lines.append(f"├─ {item}")
+            else:
+                lines.append(f"└─ {item}")
+        
+        file_trees.append("\n".join(lines))
+    
+    all_trees = "\n\n".join(file_trees)
+    
     body = f"""안녕하세요! 캐피입니다 😊
-인터뷰 정리 결과를 보내드립니다.
 
-📄 다음 파일들을 처리했습니다 ({len(files_data)}개)
-─────────────────────────────────────────
-{file_list}
-✅ {task_str}를 완료했습니다
+🎯인터뷰 정리 결과입니다.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-※ 첨부파일을 확인해주세요!
+{all_trees}
 
-💰 처리 비용: 약 {costs['total_krw']:,.0f}원
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-오늘도 좋은 하루 되세요 😃
-캐피가 드립니다.
+💰시간/비용은 이만큼 들어 갔어요
+- 파일: {len(files_data)}개 파일 ({', '.join(tasks)})
+- 시간: {minutes}분 {seconds}초
+- 비용: 약 {costs['total_krw']:,.0f}원
 
+오늘도 좋은 하루 되세요 😊
+캐피 올림
 {date_str}
-"""
+
+
+※ 모든 파일은 첨부파일에서 확인하실 수 있습니다. 💾"""
+    
     return body
 
 
@@ -728,8 +780,8 @@ def process_job_background(job_id, files_data, config):
                     if out_md:
                         zf.writestr(f"{base}.md", result['transcript'])
                     if out_docx:
-                        docx_data = create_docx(result['transcript'], base)
-                        zf.writestr(f"{base}.docx", docx_data)
+                        docx_buf = create_docx(result['transcript'], base)
+                        zf.writestr(f"{base}.docx", docx_buf.getvalue())
                     if out_txt:
                         plain = re.sub(r'[#*_\-]+', '', result['transcript'])
                         zf.writestr(f"{base}.txt", re.sub(r'\n{3,}', '\n\n', plain))
@@ -738,8 +790,8 @@ def process_job_background(job_id, files_data, config):
                     if out_md:
                         zf.writestr(f"#{base}.md", result['summary'])
                     if out_docx:
-                        docx_data = create_docx(result['summary'], f"#{base}")
-                        zf.writestr(f"#{base}.docx", docx_data)
+                        docx_buf = create_docx(result['summary'], f"#{base}")
+                        zf.writestr(f"#{base}.docx", docx_buf.getvalue())
                     if out_txt:
                         plain = re.sub(r'[#*_\-]+', '', result['summary'])
                         zf.writestr(f"#{base}.txt", re.sub(r'\n{3,}', '\n\n', plain))
@@ -749,50 +801,127 @@ def process_job_background(job_id, files_data, config):
         save_job_state(job_id, state)
         
         emails = config['emails']
+        email_attach = config.get('email_attach', 'zip_only')
         elapsed = time.time() - datetime.fromisoformat(state['start_time']).timestamp()
         costs = calculate_costs(state['total_audio_min'], state['total_in_tok'], state['total_out_tok'], stt_model)
         
         # 이메일 본문
         body = generate_email_body(files_data, config, elapsed, costs)
         
-        # 첨부파일 준비 - 선택한 형식대로
-        attachments = []
+        # 관리자 확인
+        admin_email = "dskam@lgbr.co.kr"
+        has_admin = admin_email in emails
         
-        for filename, result in state['results'].items():
-            base = result['base_name']
-            
-            # Whisper 원본
-            if result.get('whisper'):
-                attachments.append((f"{base}_whisper.txt", result['whisper'].encode('utf-8')))
-            
-            # 트랜스크립트
-            if result.get('transcript'):
-                if out_md:
-                    attachments.append((f"{base}.md", result['transcript'].encode('utf-8')))
-                if out_docx:
-                    docx_data = create_docx(result['transcript'], base)
-                    attachments.append((f"{base}.docx", docx_data))
-                if out_txt:
-                    plain = re.sub(r'[#*_\-]+', '', result['transcript'])
-                    attachments.append((f"{base}.txt", plain.encode('utf-8')))
-            
-            # 요약
-            if result.get('summary'):
-                if out_md:
-                    attachments.append((f"#{base}.md", result['summary'].encode('utf-8')))
-                if out_docx:
-                    docx_data = create_docx(result['summary'], f"#{base}")
-                    attachments.append((f"#{base}.docx", docx_data))
-                if out_txt:
-                    plain = re.sub(r'[#*_\-]+', '', result['summary'])
-                    attachments.append((f"#{base}.txt", plain.encode('utf-8')))
+        # 일반 사용자용 첨부파일 준비
+        user_attachments = []
+        
+        # email_attach 옵션에 따라 첨부 방식 결정
+        if email_attach in ["all", "files_only"]:
+            # 개별 파일 첨부
+            for filename, result in state['results'].items():
+                base = result['base_name']
+                
+                # Whisper 원본
+                if result.get('whisper'):
+                    user_attachments.append((f"{base}_whisper.txt", result['whisper'].encode('utf-8')))
+                
+                # 트랜스크립트
+                if result.get('transcript'):
+                    if out_md:
+                        user_attachments.append((f"{base}.md", result['transcript'].encode('utf-8')))
+                    if out_docx:
+                        docx_buf = create_docx(result['transcript'], base)
+                        user_attachments.append((f"{base}.docx", docx_buf.getvalue()))
+                    if out_txt:
+                        plain = re.sub(r'[#*_\-]+', '', result['transcript'])
+                        plain = re.sub(r'\n{3,}', '\n\n', plain)
+                        user_attachments.append((f"{base}.txt", plain.encode('utf-8')))
+                
+                # 요약
+                if result.get('summary'):
+                    if out_md:
+                        user_attachments.append((f"#{base}.md", result['summary'].encode('utf-8')))
+                    if out_docx:
+                        docx_buf = create_docx(result['summary'], f"#{base}")
+                        user_attachments.append((f"#{base}.docx", docx_buf.getvalue()))
+                    if out_txt:
+                        plain = re.sub(r'[#*_\-]+', '', result['summary'])
+                        plain = re.sub(r'\n{3,}', '\n\n', plain)
+                        user_attachments.append((f"#{base}.txt", plain.encode('utf-8')))
+        
+        # ZIP 파일 첨부 (all 또는 zip_only)
+        if email_attach in ["all", "zip_only"]:
+            zip_path = os.path.join(JOB_DIR, job_id, 'output.zip')
+            if os.path.exists(zip_path):
+                with open(zip_path, 'rb') as f:
+                    first_base = files_data[0]['filename'].rsplit('.', 1)[0]
+                    email_id = emails[0].split('@')[0] if emails and '@' in emails[0] else ""
+                    date_str = get_kst_now().strftime('%y%m%d')
+                    
+                    if email_id:
+                        zip_name = f"{email_id}{date_str}+{first_base}.zip"
+                    else:
+                        zip_name = f"interview_{date_str}+{first_base}.zip"
+                    
+                    zip_name = zip_name.replace(' ', '_')
+                    user_attachments.append((zip_name, f.read()))
         
         # 제목
         first_file = files_data[0]['filename']
         first_base = first_file.rsplit('.', 1)[0]
-        subject = f"[캐피 인터뷰] 인터뷰 정리 완료 - {first_base}"
         
-        send_email(emails, subject, body, attachments)
+        if len(files_data) > 1:
+            subject = f"인터뷰 정리가 도착했어요 - {first_base} 외 {len(files_data)-1}개"
+        else:
+            subject = f"인터뷰 정리가 도착했어요 - {first_base}"
+        
+        # 일반 사용자에게 이메일 발송
+        user_emails = [e for e in emails if e != admin_email]
+        if user_emails:
+            send_email(user_emails, subject, body, user_attachments)
+        
+        # 관리자에게 별도 발송 (모든 형식 포함)
+        if has_admin:
+            admin_attachments = []
+            
+            # 모든 형식 첨부
+            for filename, result in state['results'].items():
+                base = result['base_name']
+                
+                # Whisper 원본
+                if result.get('whisper'):
+                    admin_attachments.append((f"{base}_whisper.txt", result['whisper'].encode('utf-8')))
+                
+                # 트랜스크립트 (모든 형식)
+                if result.get('transcript'):
+                    admin_attachments.append((f"{base}.md", result['transcript'].encode('utf-8')))
+                    docx_buf = create_docx(result['transcript'], base)
+                    admin_attachments.append((f"{base}.docx", docx_buf.getvalue()))
+                    plain = re.sub(r'[#*_\-]+', '', result['transcript'])
+                    plain = re.sub(r'\n{3,}', '\n\n', plain)
+                    admin_attachments.append((f"{base}.txt", plain.encode('utf-8')))
+                
+                # 요약 (모든 형식)
+                if result.get('summary'):
+                    admin_attachments.append((f"#{base}.md", result['summary'].encode('utf-8')))
+                    docx_buf = create_docx(result['summary'], f"#{base}")
+                    admin_attachments.append((f"#{base}.docx", docx_buf.getvalue()))
+                    plain = re.sub(r'[#*_\-]+', '', result['summary'])
+                    plain = re.sub(r'\n{3,}', '\n\n', plain)
+                    admin_attachments.append((f"#{base}.txt", plain.encode('utf-8')))
+            
+            # ZIP 파일도 첨부
+            zip_path = os.path.join(JOB_DIR, job_id, 'output.zip')
+            if os.path.exists(zip_path):
+                with open(zip_path, 'rb') as f:
+                    first_base = files_data[0]['filename'].rsplit('.', 1)[0]
+                    date_str = get_kst_now().strftime('%y%m%d')
+                    zip_name = f"admin_{date_str}+{first_base}.zip"
+                    zip_name = zip_name.replace(' ', '_')
+                    admin_attachments.append((zip_name, f.read()))
+            
+            admin_subject = f"[관리자] {subject}"
+            send_email([admin_email], admin_subject, body, admin_attachments)
         
         # 완료
         state['status'] = 'completed'
@@ -858,7 +987,7 @@ def show_progress_ui(job_state):
         st.rerun()
 
 def show_completed_ui(job_state):
-    """완료 화면 - 세련된 디자인"""
+    """완료 화면 - 아이콘 형식 버튼"""
     st.markdown("---")
     
     steps = ['받아쓰기', '번역정리', '요약', '파일생성', '이메일']
@@ -883,51 +1012,33 @@ def show_completed_ui(job_state):
     
     st.markdown("---")
     
-    # 커스텀 CSS - 세련된 다운로드 버튼
+    # 커스텀 CSS - 아이콘 형식 초미니 버튼
     st.markdown("""
     <style>
-    /* 다운로드 섹션 스타일 */
-    .download-section {
-        background: #f8f9fa;
-        border-radius: 12px;
-        padding: 1.5rem;
-        margin-bottom: 1rem;
-    }
-    
+    /* 파일 헤더 */
     .file-header {
-        font-size: 1rem;
+        font-size: 0.9rem;
         font-weight: 600;
         color: #2c3e50;
-        margin-bottom: 1rem;
+        margin-bottom: 0.4rem;
         display: flex;
         align-items: center;
-        gap: 0.5rem;
+        gap: 0.4rem;
     }
     
-    .file-icon {
-        font-size: 1.2rem;
-    }
-    
-    /* 다운로드 버튼 그리드 */
-    .download-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-        gap: 0.75rem;
-        margin-top: 1rem;
-    }
-    
-    /* 개별 버튼 스타일 */
+    /* 아이콘 형식 버튼 */
     div[data-testid="stDownloadButton"] > button {
         background: white;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        padding: 0.6rem 1rem;
-        font-size: 0.85rem;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        padding: 0.25rem 0.5rem;
+        font-size: 0.7rem;
         font-weight: 500;
-        color: #495057;
-        transition: all 0.2s ease;
-        width: 100%;
+        color: #6c757d;
+        transition: all 0.15s ease;
         height: auto;
+        min-height: auto;
+        line-height: 1.2;
     }
     
     div[data-testid="stDownloadButton"] > button:hover {
@@ -935,7 +1046,7 @@ def show_completed_ui(job_state):
         border-color: #4CAF50;
         color: #4CAF50;
         transform: translateY(-1px);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.06);
     }
     
     /* ZIP 다운로드 버튼 */
@@ -943,16 +1054,16 @@ def show_completed_ui(job_state):
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         border: none;
         color: white;
-        padding: 1rem;
-        font-size: 1rem;
+        padding: 0.85rem;
+        font-size: 0.9rem;
         font-weight: 600;
-        border-radius: 12px;
-        transition: all 0.3s ease;
+        border-radius: 8px;
+        transition: all 0.2s ease;
     }
     
     .zip-download > button:hover {
         transform: translateY(-2px);
-        box-shadow: 0 8px 16px rgba(102, 126, 234, 0.4);
+        box-shadow: 0 6px 12px rgba(102, 126, 234, 0.3);
     }
     
     /* 새 작업 버튼 */
@@ -960,10 +1071,10 @@ def show_completed_ui(job_state):
         background: white;
         border: 2px solid #e0e0e0;
         color: #495057;
-        padding: 0.8rem;
-        font-size: 0.95rem;
+        padding: 0.7rem;
+        font-size: 0.85rem;
         font-weight: 500;
-        border-radius: 10px;
+        border-radius: 8px;
     }
     
     .new-task > button:hover {
@@ -988,22 +1099,25 @@ def show_completed_ui(job_state):
         base_name = result['base_name']
         
         # 파일 헤더
-        st.markdown(f"""
-        <div class="file-header">
-            <span class="file-icon">📄</span>
-            <span>{filename}</span>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"**📄 {filename}**")
         
-        # 다운로드 버튼들을 그리드로 배치
-        buttons = []
+        # 모든 버튼을 한 줄에 배치 - 더 많은 컬럼
+        button_cols = st.columns([0.7, 0.8, 0.8, 0.8, 0.8, 0.8, 6])
+        col_idx = 0
         
         # Whisper 원본
         if result.get('whisper'):
             whisper_file = os.path.join(results_dir, f"{base_name}_whisper.txt")
             if os.path.exists(whisper_file):
                 with open(whisper_file, 'rb') as f:
-                    buttons.append(('whisper', '원본 TXT', f.read(), f"{base_name}_whisper.txt"))
+                    with button_cols[col_idx]:
+                        st.download_button(
+                            "[원본]",
+                            f.read(),
+                            f"{base_name}_whisper.txt",
+                            key=f"w_{base_name}"
+                        )
+                        col_idx += 1
         
         # 트랜스크립트
         if result.get('transcript'):
@@ -1013,13 +1127,36 @@ def show_completed_ui(job_state):
                     transcript_content = f.read()
                 
                 if out_md:
-                    buttons.append(('trans_md', '정리 MD', transcript_content.encode('utf-8'), f"{base_name}.md"))
+                    with button_cols[col_idx]:
+                        st.download_button(
+                            "[정리MD]",
+                            transcript_content.encode('utf-8'),
+                            f"{base_name}.md",
+                            key=f"tmd_{base_name}"
+                        )
+                        col_idx += 1
+                
                 if out_docx:
-                    docx_data = create_docx(transcript_content, base_name)
-                    buttons.append(('trans_docx', '정리 DOCX', docx_data, f"{base_name}.docx"))
+                    docx_buf = create_docx(transcript_content, base_name)
+                    with button_cols[col_idx]:
+                        st.download_button(
+                            "[정리DOC]",
+                            docx_buf.getvalue(),
+                            f"{base_name}.docx",
+                            key=f"tdoc_{base_name}"
+                        )
+                        col_idx += 1
+                
                 if out_txt:
                     plain = re.sub(r'[#*_\-]+', '', transcript_content)
-                    buttons.append(('trans_txt', '정리 TXT', plain.encode('utf-8'), f"{base_name}.txt"))
+                    with button_cols[col_idx]:
+                        st.download_button(
+                            "[정리TXT]",
+                            plain.encode('utf-8'),
+                            f"{base_name}.txt",
+                            key=f"ttxt_{base_name}"
+                        )
+                        col_idx += 1
         
         # 요약
         if result.get('summary'):
@@ -1029,27 +1166,36 @@ def show_completed_ui(job_state):
                     summary_content = f.read()
                 
                 if out_md:
-                    buttons.append(('sum_md', '요약 MD', summary_content.encode('utf-8'), f"#{base_name}.md"))
+                    with button_cols[col_idx]:
+                        st.download_button(
+                            "[요약MD]",
+                            summary_content.encode('utf-8'),
+                            f"#{base_name}.md",
+                            key=f"smd_{base_name}"
+                        )
+                        col_idx += 1
+                
                 if out_docx:
-                    docx_data = create_docx(summary_content, f"#{base_name}")
-                    buttons.append(('sum_docx', '요약 DOCX', docx_data, f"#{base_name}.docx"))
+                    docx_buf = create_docx(summary_content, f"#{base_name}")
+                    with button_cols[col_idx]:
+                        st.download_button(
+                            "[요약DOC]",
+                            docx_buf.getvalue(),
+                            f"#{base_name}.docx",
+                            key=f"sdoc_{base_name}"
+                        )
+                        col_idx += 1
+                
                 if out_txt:
                     plain = re.sub(r'[#*_\-]+', '', summary_content)
-                    buttons.append(('sum_txt', '요약 TXT', plain.encode('utf-8'), f"#{base_name}.txt"))
-        
-        # 버튼 배치 (최대 4개씩)
-        if buttons:
-            num_cols = min(4, len(buttons))
-            cols = st.columns(num_cols)
-            
-            for idx, (btn_type, label, data, fname) in enumerate(buttons):
-                with cols[idx % num_cols]:
-                    st.download_button(
-                        label,
-                        data,
-                        fname,
-                        key=f"{btn_type}_{base_name}_{idx}"
-                    )
+                    with button_cols[col_idx]:
+                        st.download_button(
+                            "[요약TXT]",
+                            plain.encode('utf-8'),
+                            f"#{base_name}.txt",
+                            key=f"stxt_{base_name}"
+                        )
+                        col_idx += 1
         
         st.markdown("<br>", unsafe_allow_html=True)
     
@@ -1063,7 +1209,7 @@ def show_completed_ui(job_state):
         
         st.markdown('<div class="zip-download">', unsafe_allow_html=True)
         st.download_button(
-            "📦 전체 ZIP 다운로드",
+            "📦 [전체 ZIP]",
             zip_data,
             f"interview_{get_kst_now().strftime('%y%m%d')}.zip",
             "application/zip",
@@ -1250,37 +1396,13 @@ def main():
                     
                     st.markdown("---")
                     
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.markdown("**📝 정리 옵션**")
-                        if is_audio:
-                            do_transcript = st.checkbox("번역/노트정리", value=True)
-                        else:
-                            do_transcript = st.checkbox("풀 트랜스크립트", value=True)
-                        do_summary = st.checkbox("요약문 작성", value=False)
-                    
-                    with col2:
-                        st.markdown("**📄 출력 형식**")
-                        out_md = st.checkbox("Markdown", value=True)
-                        out_docx = st.checkbox("Word", value=True)
-                        out_txt = st.checkbox("Text", value=False)
-                    
+                    # 작업 내용 (단순화)
+                    st.markdown("**📝 작업 내용**")
                     if is_audio:
-                        st.markdown("---")
-                        st.markdown("**🎤 음성 인식 모델**")
-                        stt_model = st.radio(
-                            "음성 인식 모델 선택",
-                            options=["gpt-4o-transcribe", "whisper-1", "gpt-4o-mini-transcribe"],
-                            format_func=lambda x: {
-                                "gpt-4o-transcribe": "GPT-4o ($0.006/분) - 최고 정확도",
-                                "whisper-1": "Whisper ($0.006/분) - 안정적",
-                                "gpt-4o-mini-transcribe": "GPT-4o Mini ($0.003/분) - 저렴"
-                            }[x],
-                            index=0,
-                            label_visibility="collapsed"
-                        )
+                        do_transcript = st.checkbox("번역/노트정리", value=True)
                     else:
-                        stt_model = "whisper-1"
+                        do_transcript = st.checkbox("풀 트랜스크립트", value=True)
+                    do_summary = st.checkbox("요약문 작성", value=True)  # 기본값 ON
                     
                     st.markdown("---")
                     st.markdown("**📧 결과 받을 이메일** (필수)")
@@ -1289,6 +1411,53 @@ def main():
                     
                     if emails:
                         st.caption(f"📬 {len(emails)}명: {', '.join(emails)}")
+                    
+                    # 기본 설정 안내 + 상세 옵션 expander
+                    st.markdown("")
+                    st.info("💡 Word 파일 + ZIP으로 전송 (Whisper 모델 사용)")
+                    
+                    with st.expander("⚙️ 상세 옵션", expanded=False):
+                        st.markdown("##### 📄 출력 형식")
+                        out_docx = st.checkbox("Word 문서", value=True, key="opt_docx")
+                        out_md = st.checkbox("Markdown 문서", value=False, key="opt_md")
+                        out_txt = st.checkbox("Text 파일", value=False, key="opt_txt")
+                        
+                        st.markdown("")
+                        st.markdown("##### 📧 이메일 첨부 방식")
+                        email_attach = st.radio(
+                            "첨부 방식 선택",
+                            options=["zip_only", "all", "files_only"],
+                            format_func=lambda x: {
+                                "all": "개별 파일 + ZIP (모든 파일, 용량 큼)",
+                                "zip_only": "ZIP 파일만 (깔끔, 용량 작음)",
+                                "files_only": "개별 파일만 (ZIP 제외)"
+                            }[x],
+                            index=0,  # zip_only가 기본
+                            label_visibility="collapsed",
+                            key="email_attach"
+                        )
+                        
+                        if is_audio:
+                            st.markdown("")
+                            st.markdown("##### 🎤 음성 인식 모델")
+                            stt_model = st.radio(
+                                "음성 인식 모델 선택",
+                                options=["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"],
+                                format_func=lambda x: {
+                                    "gpt-4o-transcribe": "GPT-4o ($0.006/분) - 최고 정확도",
+                                    "whisper-1": "Whisper ($0.006/분) - 안정적",
+                                    "gpt-4o-mini-transcribe": "GPT-4o Mini ($0.003/분) - 저렴"
+                                }[x],
+                                index=0,  # whisper-1이 기본
+                                label_visibility="collapsed",
+                                key="stt_model"
+                            )
+                        else:
+                            stt_model = "whisper-1"
+                    
+                    # expander 밖에서 기본값 확인
+                    if 'email_attach' not in locals():
+                        email_attach = "zip_only"
                     
                     st.markdown("---")
                     
@@ -1316,7 +1485,9 @@ def main():
                             'out_docx': out_docx,
                             'out_txt': out_txt,
                             'stt_model': stt_model,
-                            'emails': emails
+                            'email_attach': email_attach,
+                            'emails': emails,
+                            'files': [f.name for f in files]
                         }
                         
                         st.session_state.active_job_id = job_id
