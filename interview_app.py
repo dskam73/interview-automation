@@ -456,7 +456,7 @@ def add_header_to_summary(summary, header):
     return summary
 
 # ============================================
-# DOCX 생성
+# DOCX 생성 (bytes 반환)
 # ============================================
 def set_docx_font(run, font_name=DOCX_FONT_NAME, size=11):
     run.font.name = font_name
@@ -467,6 +467,7 @@ def set_docx_font(run, font_name=DOCX_FONT_NAME, size=11):
     rFonts.set(qn('w:eastAsia'), font_name)
 
 def create_docx(content, title="문서"):
+    """DOCX를 생성하고 bytes를 반환"""
     doc = Document()
     style = doc.styles['Normal']
     style.font.name = DOCX_FONT_NAME
@@ -508,7 +509,7 @@ def create_docx(content, title="문서"):
     buf = io.BytesIO()
     doc.save(buf)
     buf.seek(0)
-    return buf.read()
+    return buf.read()  # bytes 반환
 
 # ============================================
 # 이메일
@@ -517,7 +518,8 @@ def send_email(to_emails, subject, body, attachments=None):
     try:
         gmail_user = st.secrets.get("gmail_user")
         gmail_password = st.secrets.get("gmail_password")
-        if not gmail_user or gmail_password:
+        
+        if not gmail_user or not gmail_password:
             return False, "이메일 설정 없음"
         
         msg = MIMEMultipart()
@@ -625,9 +627,9 @@ def generate_email_body(files_data, config, elapsed, costs):
         # 트리 구조로 조합
         for i, item in enumerate(items):
             if i < len(items) - 1:
-                lines.append(f"├─ {item}")
+                lines.append(f"   ├─ {item}")
             else:
-                lines.append(f"└─ {item}")
+                lines.append(f"   └─ {item}")
         
         file_trees.append("\n".join(lines))
     
@@ -678,7 +680,7 @@ def process_job_background(job_id, files_data, config):
         'total_in_tok': 0,
         'total_out_tok': 0,
         'error': None,
-        'config': config  # config 저장
+        'config': config
     }
     save_job_state(job_id, state)
     
@@ -780,8 +782,8 @@ def process_job_background(job_id, files_data, config):
                     if out_md:
                         zf.writestr(f"{base}.md", result['transcript'])
                     if out_docx:
-                        docx_buf = create_docx(result['transcript'], base)
-                        zf.writestr(f"{base}.docx", docx_buf.getvalue())
+                        docx_bytes = create_docx(result['transcript'], base)
+                        zf.writestr(f"{base}.docx", docx_bytes)
                     if out_txt:
                         plain = re.sub(r'[#*_\-]+', '', result['transcript'])
                         zf.writestr(f"{base}.txt", re.sub(r'\n{3,}', '\n\n', plain))
@@ -790,8 +792,8 @@ def process_job_background(job_id, files_data, config):
                     if out_md:
                         zf.writestr(f"#{base}.md", result['summary'])
                     if out_docx:
-                        docx_buf = create_docx(result['summary'], f"#{base}")
-                        zf.writestr(f"#{base}.docx", docx_buf.getvalue())
+                        docx_bytes = create_docx(result['summary'], f"#{base}")
+                        zf.writestr(f"#{base}.docx", docx_bytes)
                     if out_txt:
                         plain = re.sub(r'[#*_\-]+', '', result['summary'])
                         zf.writestr(f"#{base}.txt", re.sub(r'\n{3,}', '\n\n', plain))
@@ -830,8 +832,8 @@ def process_job_background(job_id, files_data, config):
                     if out_md:
                         user_attachments.append((f"{base}.md", result['transcript'].encode('utf-8')))
                     if out_docx:
-                        docx_buf = create_docx(result['transcript'], base)
-                        user_attachments.append((f"{base}.docx", docx_buf.getvalue()))
+                        docx_bytes = create_docx(result['transcript'], base)
+                        user_attachments.append((f"{base}.docx", docx_bytes))
                     if out_txt:
                         plain = re.sub(r'[#*_\-]+', '', result['transcript'])
                         plain = re.sub(r'\n{3,}', '\n\n', plain)
@@ -842,8 +844,8 @@ def process_job_background(job_id, files_data, config):
                     if out_md:
                         user_attachments.append((f"#{base}.md", result['summary'].encode('utf-8')))
                     if out_docx:
-                        docx_buf = create_docx(result['summary'], f"#{base}")
-                        user_attachments.append((f"#{base}.docx", docx_buf.getvalue()))
+                        docx_bytes = create_docx(result['summary'], f"#{base}")
+                        user_attachments.append((f"#{base}.docx", docx_bytes))
                     if out_txt:
                         plain = re.sub(r'[#*_\-]+', '', result['summary'])
                         plain = re.sub(r'\n{3,}', '\n\n', plain)
@@ -851,7 +853,6 @@ def process_job_background(job_id, files_data, config):
         
         # ZIP 파일 첨부 (all 또는 zip_only)
         if email_attach in ["all", "zip_only"]:
-            zip_path = os.path.join(JOB_DIR, job_id, 'output.zip')
             if os.path.exists(zip_path):
                 with open(zip_path, 'rb') as f:
                     first_base = files_data[0]['filename'].rsplit('.', 1)[0]
@@ -895,8 +896,8 @@ def process_job_background(job_id, files_data, config):
                 # 트랜스크립트 (모든 형식)
                 if result.get('transcript'):
                     admin_attachments.append((f"{base}.md", result['transcript'].encode('utf-8')))
-                    docx_buf = create_docx(result['transcript'], base)
-                    admin_attachments.append((f"{base}.docx", docx_buf.getvalue()))
+                    docx_bytes = create_docx(result['transcript'], base)
+                    admin_attachments.append((f"{base}.docx", docx_bytes))
                     plain = re.sub(r'[#*_\-]+', '', result['transcript'])
                     plain = re.sub(r'\n{3,}', '\n\n', plain)
                     admin_attachments.append((f"{base}.txt", plain.encode('utf-8')))
@@ -904,14 +905,13 @@ def process_job_background(job_id, files_data, config):
                 # 요약 (모든 형식)
                 if result.get('summary'):
                     admin_attachments.append((f"#{base}.md", result['summary'].encode('utf-8')))
-                    docx_buf = create_docx(result['summary'], f"#{base}")
-                    admin_attachments.append((f"#{base}.docx", docx_buf.getvalue()))
+                    docx_bytes = create_docx(result['summary'], f"#{base}")
+                    admin_attachments.append((f"#{base}.docx", docx_bytes))
                     plain = re.sub(r'[#*_\-]+', '', result['summary'])
                     plain = re.sub(r'\n{3,}', '\n\n', plain)
                     admin_attachments.append((f"#{base}.txt", plain.encode('utf-8')))
             
             # ZIP 파일도 첨부
-            zip_path = os.path.join(JOB_DIR, job_id, 'output.zip')
             if os.path.exists(zip_path):
                 with open(zip_path, 'rb') as f:
                     first_base = files_data[0]['filename'].rsplit('.', 1)[0]
@@ -955,7 +955,7 @@ def show_steps(current_idx, steps):
                 st.markdown(f"<div style='text-align:center;color:#aaa;font-size:0.9rem'>○<br>{step}</div>", unsafe_allow_html=True)
 
 def show_progress_ui(job_state):
-    """진행 중 화면"""
+    """진행 중 화면 - 파일 업로드 UI 제거"""
     steps = ['받아쓰기', '번역정리', '요약', '파일생성', '이메일']
     current_step = job_state.get('current_step', 'init')
     
@@ -978,7 +978,7 @@ def show_progress_ui(job_state):
         st.caption(f"📄 {get_step_display(current_step)}... ({progress}%)")
     
     st.markdown("---")
-    st.info("📨 작업이 시작되었습니다! 끝나면 메일로 보내 드릴께요\n(화면을 닫아도 됩니다)")
+    st.info("📨 작업이 시작되었습니다! 끝나면 이메일로 결과를 보내드릴게요\n(이 화면을 닫아도 캐피는 계속 일해요)")
     
     # 뒤로가기 버튼
     if st.button("🏠 처음 화면으로", use_container_width=True):
@@ -987,7 +987,7 @@ def show_progress_ui(job_state):
         st.rerun()
 
 def show_completed_ui(job_state):
-    """완료 화면 - 아이콘 형식 버튼"""
+    """완료 화면 - .getvalue() 오류 수정"""
     st.markdown("---")
     
     steps = ['받아쓰기', '번역정리', '요약', '파일생성', '이메일']
@@ -1012,10 +1012,9 @@ def show_completed_ui(job_state):
     
     st.markdown("---")
     
-    # 커스텀 CSS - 아이콘 형식 초미니 버튼
+    # 커스텀 CSS
     st.markdown("""
     <style>
-    /* 파일 헤더 */
     .file-header {
         font-size: 0.9rem;
         font-weight: 600;
@@ -1026,7 +1025,6 @@ def show_completed_ui(job_state):
         gap: 0.4rem;
     }
     
-    /* 아이콘 형식 버튼 */
     div[data-testid="stDownloadButton"] > button {
         background: white;
         border: 1px solid #dee2e6;
@@ -1049,7 +1047,6 @@ def show_completed_ui(job_state):
         box-shadow: 0 2px 4px rgba(0,0,0,0.06);
     }
     
-    /* ZIP 다운로드 버튼 */
     .zip-download > button {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         border: none;
@@ -1066,7 +1063,6 @@ def show_completed_ui(job_state):
         box-shadow: 0 6px 12px rgba(102, 126, 234, 0.3);
     }
     
-    /* 새 작업 버튼 */
     .new-task > button {
         background: white;
         border: 2px solid #e0e0e0;
@@ -1101,7 +1097,7 @@ def show_completed_ui(job_state):
         # 파일 헤더
         st.markdown(f"**📄 {filename}**")
         
-        # 모든 버튼을 한 줄에 배치 - 더 많은 컬럼
+        # 모든 버튼을 한 줄에 배치
         button_cols = st.columns([0.7, 0.8, 0.8, 0.8, 0.8, 0.8, 6])
         col_idx = 0
         
@@ -1137,11 +1133,11 @@ def show_completed_ui(job_state):
                         col_idx += 1
                 
                 if out_docx:
-                    docx_buf = create_docx(transcript_content, base_name)
+                    docx_bytes = create_docx(transcript_content, base_name)
                     with button_cols[col_idx]:
                         st.download_button(
                             "[정리DOC]",
-                            docx_buf.getvalue(),
+                            docx_bytes,  # bytes 직접 사용
                             f"{base_name}.docx",
                             key=f"tdoc_{base_name}"
                         )
@@ -1176,11 +1172,11 @@ def show_completed_ui(job_state):
                         col_idx += 1
                 
                 if out_docx:
-                    docx_buf = create_docx(summary_content, f"#{base_name}")
+                    docx_bytes = create_docx(summary_content, f"#{base_name}")
                     with button_cols[col_idx]:
                         st.download_button(
                             "[요약DOC]",
-                            docx_buf.getvalue(),
+                            docx_bytes,  # bytes 직접 사용
                             f"#{base_name}.docx",
                             key=f"sdoc_{base_name}"
                         )
@@ -1209,7 +1205,7 @@ def show_completed_ui(job_state):
         
         st.markdown('<div class="zip-download">', unsafe_allow_html=True)
         st.download_button(
-            "📦 [전체 ZIP]",
+            "📦 전체 ZIP 다운로드",
             zip_data,
             f"interview_{get_kst_now().strftime('%y%m%d')}.zip",
             "application/zip",
@@ -1353,10 +1349,10 @@ def main():
                 time.sleep(HEARTBEAT_INTERVAL)
                 st.rerun()
             elif job_state['status'] == 'completed':
-                st.markdown("퇴근하실 때 정리를 부탁하고 창을 열어두면 아침에 메일로 받아 보실 수 있어요 ^^*...")
+                st.markdown("모든 작업이 완료되었습니다! 이메일도 보내드렸어요 📧")
                 show_completed_ui(job_state)
             elif job_state['status'] == 'error':
-                st.markdown("퇴근하실 때 정리를 부탁하고 창을 열어두면 아침에 메일로 받아 보실 수 있어요 ^^*...")
+                st.markdown("작업 중 문제가 발생했어요 😢")
                 show_error_ui(job_state)
         else:
             del st.session_state['active_job_id']
@@ -1396,13 +1392,13 @@ def main():
                     
                     st.markdown("---")
                     
-                    # 작업 내용 (단순화)
+                    # 작업 내용
                     st.markdown("**📝 작업 내용**")
                     if is_audio:
                         do_transcript = st.checkbox("번역/노트정리", value=True)
                     else:
                         do_transcript = st.checkbox("풀 트랜스크립트", value=True)
-                    do_summary = st.checkbox("요약문 작성", value=True)  # 기본값 ON
+                    do_summary = st.checkbox("요약문 작성", value=True)
                     
                     st.markdown("---")
                     st.markdown("**📧 결과 받을 이메일** (필수)")
@@ -1412,7 +1408,6 @@ def main():
                     if emails:
                         st.caption(f"📬 {len(emails)}명: {', '.join(emails)}")
                     
-                    # 기본 설정 안내 + 상세 옵션 expander
                     st.markdown("")
                     st.info("💡 Word 파일 + ZIP으로 전송 (Whisper 모델 사용)")
                     
@@ -1432,7 +1427,7 @@ def main():
                                 "zip_only": "ZIP 파일만 (깔끔, 용량 작음)",
                                 "files_only": "개별 파일만 (ZIP 제외)"
                             }[x],
-                            index=0,  # zip_only가 기본
+                            index=0,
                             label_visibility="collapsed",
                             key="email_attach"
                         )
@@ -1448,14 +1443,13 @@ def main():
                                     "whisper-1": "Whisper ($0.006/분) - 안정적",
                                     "gpt-4o-mini-transcribe": "GPT-4o Mini ($0.003/분) - 저렴"
                                 }[x],
-                                index=0,  # whisper-1이 기본
+                                index=0,
                                 label_visibility="collapsed",
                                 key="stt_model"
                             )
                         else:
                             stt_model = "whisper-1"
                     
-                    # expander 밖에서 기본값 확인
                     if 'email_attach' not in locals():
                         email_attach = "zip_only"
                     
