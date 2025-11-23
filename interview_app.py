@@ -1349,6 +1349,7 @@ def main():
                 show_progress_ui(job_state)
                 time.sleep(HEARTBEAT_INTERVAL)
                 st.rerun()
+                return  # ✅ 즉시 함수 종료!
             elif job_state['status'] == 'completed':
                 st.markdown("모든 작업이 완료되었습니다! 이메일도 보내드렸어요 📧")
                 show_completed_ui(job_state)
