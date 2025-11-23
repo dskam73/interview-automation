@@ -1415,8 +1415,6 @@ def main():
     
     # 여기서부터는 active_job_id가 없을 때만 실행됨
     st.markdown("퇴근하실 때 정리를 부탁하고 창을 열어두면 아침에 메일로 받아 보실 수 있어요 ^^*...")
-    # 여기서부터는 active_job_id가 없을 때만 실행됨
-    st.markdown("퇴근하실 때 정리를 부탁하고 창을 열어두면 아침에 메일로 받아 보실 수 있어요 ^^*...")
     
     uploaded_files = st.file_uploader(
         "파일 선택",
