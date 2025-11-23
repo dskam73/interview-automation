@@ -1311,25 +1311,45 @@ def main():
     active_job_id = st.session_state.get('active_job_id')
     
     if active_job_id:
-        job_state = load_job_state(active_job_id)
+        # 세션에 저장된 상태를 우선 사용 (rerun 직후)
+        job_state = st.session_state.get('current_job_state')
+        
+        # 세션에 없으면 파일에서 로드
+        if not job_state:
+            job_state = load_job_state(active_job_id)
         
         if job_state:
             if job_state['status'] == 'processing':
                 st.markdown("꼼꼼하게 정리해 볼게요! 기대해 주세요 📎")
                 show_progress_ui(job_state)
+                
+                # 세션 상태 업데이트 (최신 상태 반영)
+                updated_state = load_job_state(active_job_id)
+                if updated_state:
+                    st.session_state.current_job_state = updated_state
+                
                 time.sleep(HEARTBEAT_INTERVAL)
                 st.rerun()
                 return  # 중요: rerun 후 나머지 코드 실행 방지
             elif job_state['status'] == 'completed':
                 st.markdown("모든 작업이 완료되었습니다! 이메일도 보내드렸어요 📧")
                 show_completed_ui(job_state)
+                # 세션 상태 정리
+                if 'current_job_state' in st.session_state:
+                    del st.session_state['current_job_state']
                 return
             elif job_state['status'] == 'error':
                 st.markdown("작업 중 문제가 발생했어요 😢")
                 show_error_ui(job_state)
+                # 세션 상태 정리
+                if 'current_job_state' in st.session_state:
+                    del st.session_state['current_job_state']
                 return
         else:
+            # job_state를 찾을 수 없으면 active_job_id 삭제
             del st.session_state['active_job_id']
+            if 'current_job_state' in st.session_state:
+                del st.session_state['current_job_state']
             st.rerun()
             return  # rerun 후 return 추가
     
@@ -1468,7 +1488,13 @@ def main():
                             'files': [f.name for f in files]
                         }
                     }
+                    
+                    # 파일에 저장
                     save_job_state(job_id, initial_state)
+                    
+                    # 세션에도 저장 (rerun 후 즉시 사용 가능)
+                    st.session_state.active_job_id = job_id
+                    st.session_state.current_job_state = initial_state
                     
                     # 파일 데이터 준비
                     files_data = []
@@ -1491,9 +1517,6 @@ def main():
                         'emails': emails,
                         'files': [f.name for f in files]
                     }
-                    
-                    # 세션에 job_id 저장 (진행 화면으로 전환)
-                    st.session_state.active_job_id = job_id
                     
                     # 백그라운드 스레드 시작
                     thread = threading.Thread(
