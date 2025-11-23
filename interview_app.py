@@ -17,8 +17,6 @@ import json
 import re
 import urllib.request
 import threading
-import queue
-from pathlib import Path
 import hashlib
 
 # 문서 생성용
@@ -26,6 +24,7 @@ from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 
 # ============================================
 # 페이지 설정
@@ -71,17 +70,10 @@ st.markdown("""
     color: white;
 }
 
-/* 진행 표시 */
-.progress-step {
-    display: inline-block;
-    padding: 0.5rem 1rem;
-    margin: 0.2rem;
-    border-radius: 5px;
-    font-size: 0.9rem;
+/* 파일 업로더 간소화 */
+.stFileUploader > div {
+    padding: 0.5rem;
 }
-.step-pending { background: #f0f0f0; color: #999; }
-.step-active { background: #ff6b6b; color: white; font-weight: bold; }
-.step-done { background: #51cf66; color: white; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -91,7 +83,7 @@ st.markdown("""
 MAX_FILES_PER_UPLOAD = 5
 DAILY_LIMIT_AUDIO = 30
 DAILY_LIMIT_TEXT = 30
-MAX_FILE_SIZE_MB = 25
+MAX_FILE_SIZE_MB = 20
 USAGE_FILE = "/tmp/cappy_usage.json"
 DOWNLOAD_DIR = "/tmp/cappy_downloads"
 METADATA_FILE = "/tmp/cappy_downloads/metadata.json"
@@ -151,37 +143,6 @@ def load_job_state(job_id):
         return None
     except Exception as e:
         print(f"Job 상태 로드 실패: {e}")
-        return None
-
-def save_file_result(job_id, filename, result_type, content):
-    """파일별 결과 저장"""
-    try:
-        job_dir = get_job_dir(job_id)
-        result_dir = os.path.join(job_dir, 'results')
-        os.makedirs(result_dir, exist_ok=True)
-        
-        safe_filename = re.sub(r'[^\w\-_.]', '_', filename)
-        result_file = os.path.join(result_dir, f"{safe_filename}_{result_type}.txt")
-        
-        with open(result_file, 'w', encoding='utf-8') as f:
-            f.write(content)
-        return True
-    except Exception as e:
-        print(f"파일 결과 저장 실패: {e}")
-        return False
-
-def load_file_result(job_id, filename, result_type):
-    """파일별 결과 로드"""
-    try:
-        safe_filename = re.sub(r'[^\w\-_.]', '_', filename)
-        result_file = os.path.join(get_job_dir(job_id), 'results', f"{safe_filename}_{result_type}.txt")
-        
-        if os.path.exists(result_file):
-            with open(result_file, 'r', encoding='utf-8') as f:
-                return f.read()
-        return None
-    except Exception as e:
-        print(f"파일 결과 로드 실패: {e}")
         return None
 
 # ============================================
@@ -369,16 +330,13 @@ def split_audio_file(audio_file, max_size_mb=20):
     except:
         return None
 
-def transcribe_audio(audio_file, task="transcribe", model="whisper-1"):
+def transcribe_audio(audio_file, task="transcribe"):
     try:
         api_key = st.secrets.get("OPENAI_API_KEY")
         if not api_key:
             return None, 0
         client = openai.OpenAI(api_key=api_key)
         file_size_mb = audio_file.size / (1024 * 1024)
-        
-        if task == "translate":
-            model = "whisper-1"
         
         if file_size_mb > MAX_FILE_SIZE_MB:
             chunks = split_audio_file(audio_file, MAX_FILE_SIZE_MB)
@@ -393,7 +351,7 @@ def transcribe_audio(audio_file, task="transcribe", model="whisper-1"):
                     if task == "translate":
                         result = client.audio.translations.create(model="whisper-1", file=("chunk.mp3", chunk['data'], "audio/mpeg"))
                     else:
-                        result = client.audio.transcriptions.create(model=model, file=("chunk.mp3", chunk['data'], "audio/mpeg"))
+                        result = client.audio.transcriptions.create(model="whisper-1", file=("chunk.mp3", chunk['data'], "audio/mpeg"))
                     all_text.append(result.text)
                 except:
                     continue
@@ -410,7 +368,7 @@ def transcribe_audio(audio_file, task="transcribe", model="whisper-1"):
                 if task == "translate":
                     result = client.audio.translations.create(model="whisper-1", file=f)
                 else:
-                    result = client.audio.transcriptions.create(model=model, file=f)
+                    result = client.audio.transcriptions.create(model="whisper-1", file=f)
             os.unlink(tmp_path)
             return result.text, duration
     except Exception as e:
@@ -503,6 +461,14 @@ def normalize_markdown(text):
 # ============================================
 # DOCX 생성
 # ============================================
+def set_docx_font(run, font_name=DOCX_FONT_NAME, size=11):
+    run.font.name = font_name
+    run.font.size = Pt(size)
+    r = run._element
+    rPr = r.get_or_add_rPr()
+    rFonts = rPr.get_or_add_rFonts()
+    rFonts.set(qn('w:eastAsia'), font_name)
+
 def create_docx(content, title="문서"):
     doc = Document()
     style = doc.styles['Normal']
@@ -513,55 +479,33 @@ def create_docx(content, title="문서"):
     title_para = doc.add_heading(title, 0)
     title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
     for run in title_para.runs:
-        run.font.name = DOCX_FONT_NAME
-        run.font.size = Pt(18)
-        run._element.rPr.rFonts.set(qn('w:eastAsia'), DOCX_FONT_NAME)
+        set_docx_font(run, DOCX_FONT_NAME, 18)
     
     for line in content.split('\n'):
         s = line.strip()
         if s.startswith('# '):
             h = doc.add_heading(s[2:], 1)
-            for r in h.runs:
-                r.font.name = DOCX_FONT_NAME
-                r.font.size = Pt(16)
-                r._element.rPr.rFonts.set(qn('w:eastAsia'), DOCX_FONT_NAME)
+            for r in h.runs: set_docx_font(r, DOCX_FONT_NAME, 16)
         elif s.startswith('## '):
             h = doc.add_heading(s[3:], 2)
-            for r in h.runs:
-                r.font.name = DOCX_FONT_NAME
-                r.font.size = Pt(14)
-                r._element.rPr.rFonts.set(qn('w:eastAsia'), DOCX_FONT_NAME)
+            for r in h.runs: set_docx_font(r, DOCX_FONT_NAME, 14)
         elif s.startswith('### '):
             h = doc.add_heading(s[4:], 3)
-            for r in h.runs:
-                r.font.name = DOCX_FONT_NAME
-                r.font.size = Pt(12)
-                r._element.rPr.rFonts.set(qn('w:eastAsia'), DOCX_FONT_NAME)
+            for r in h.runs: set_docx_font(r, DOCX_FONT_NAME, 12)
         elif s.startswith('#### '):
             h = doc.add_heading(s[5:], 4)
-            for r in h.runs:
-                r.font.name = DOCX_FONT_NAME
-                r.font.size = Pt(11)
-                r._element.rPr.rFonts.set(qn('w:eastAsia'), DOCX_FONT_NAME)
+            for r in h.runs: set_docx_font(r, DOCX_FONT_NAME, 11)
         elif s.startswith('- ') or s.startswith('* '):
             p = doc.add_paragraph(s[2:], style='List Bullet')
-            for r in p.runs:
-                r.font.name = DOCX_FONT_NAME
-                r.font.size = Pt(11)
-                r._element.rPr.rFonts.set(qn('w:eastAsia'), DOCX_FONT_NAME)
+            for r in p.runs: set_docx_font(r, DOCX_FONT_NAME, 11)
         elif s.startswith('---'):
             p = doc.add_paragraph('─' * 50)
-            for r in p.runs:
-                r.font.name = DOCX_FONT_NAME
-                r.font.size = Pt(11)
-                r._element.rPr.rFonts.set(qn('w:eastAsia'), DOCX_FONT_NAME)
+            for r in p.runs: set_docx_font(r, DOCX_FONT_NAME, 11)
         elif s.startswith('**') and s.endswith('**'):
             p = doc.add_paragraph()
             r = p.add_run(s.strip('*'))
             r.bold = True
-            r.font.name = DOCX_FONT_NAME
-            r.font.size = Pt(11)
-            r._element.rPr.rFonts.set(qn('w:eastAsia'), DOCX_FONT_NAME)
+            set_docx_font(r, DOCX_FONT_NAME, 11)
         elif s:
             p = doc.add_paragraph()
             for part in re.split(r'(\*\*[^*]+\*\*)', s):
@@ -570,9 +514,7 @@ def create_docx(content, title="문서"):
                     r.bold = True
                 else:
                     r = p.add_run(part)
-                r.font.name = DOCX_FONT_NAME
-                r.font.size = Pt(11)
-                r._element.rPr.rFonts.set(qn('w:eastAsia'), DOCX_FONT_NAME)
+                set_docx_font(r, DOCX_FONT_NAME, 11)
     
     buf = io.BytesIO()
     doc.save(buf)
@@ -621,36 +563,29 @@ def send_email(to_emails, subject, body, attachments=None):
     except Exception as e:
         return False, str(e)
 
-def calculate_costs(audio_min=0, in_tok=0, out_tok=0, stt_model="whisper-1"):
-    stt_rates = {
-        "whisper-1": 0.006,
-        "gpt-4o-transcribe": 0.006,
-        "gpt-4o-mini-transcribe": 0.003
-    }
-    stt_rate = stt_rates.get(stt_model, 0.006)
-    
-    stt_cost = audio_min * stt_rate
+def calculate_costs(audio_min=0, in_tok=0, out_tok=0):
+    stt_cost = audio_min * 0.006
     claude = (in_tok / 1_000_000) * 3.0 + (out_tok / 1_000_000) * 15.0
     total_krw = (stt_cost + claude) * USD_TO_KRW
     return {'total_krw': total_krw, 'stt_usd': stt_cost, 'claude_usd': claude}
 
-def generate_email_body(results, files, file_type, do_transcript, do_summary, out_md, out_docx, out_txt, minutes, seconds, costs):
+def generate_email_body(results, files, file_type, do_whisper, do_transcript, do_summary, out_md, out_docx, out_txt, minutes, seconds, costs):
+    """트리 구조를 활용한 심플하고 위계적인 이메일 본문 생성"""
     is_audio = file_type == 'audio'
-    file_type_label = "음성" if is_audio else "텍스트"
     
-    input_list = []
-    for idx, f in enumerate(files, 1):
-        input_list.append(f"{idx}. {f.name} ({file_type_label})")
-    input_section = "\n".join(input_list)
-    
+    # 출력 파일 목록 (트리 구조)
     output_list = []
     for idx, r in enumerate(results, 1):
         base = r['base_name']
-        lines = [f"{idx}. {r['filename']} ({file_type_label})"]
+        lines = [f"{idx}. {r['filename']}"]
         
-        if r.get('whisper'):
-            lines.append(f"   - 녹취(원본): {base}_whisper.txt")
+        tree_items = []
         
+        # 녹취 원본 (음성인 경우 + do_whisper 체크된 경우)
+        if r.get('whisper') and do_whisper:
+            tree_items.append(f"녹취(원본): {base}_whisper.txt")
+        
+        # 트랜스크립트
         if r.get('transcript'):
             formats = []
             if out_docx:
@@ -660,9 +595,9 @@ def generate_email_body(results, files, file_type, do_transcript, do_summary, ou
             if out_txt:
                 formats.append(f"{base}.txt")
             if formats:
-                label = "녹취(번역/정리)" if is_audio else "트랜스크립트"
-                lines.append(f"   - {label}: {', '.join(formats)}")
+                tree_items.append(f"트랜스크립트: {', '.join(formats)}")
         
+        # 요약
         if r.get('summary'):
             formats = []
             if out_docx:
@@ -672,37 +607,53 @@ def generate_email_body(results, files, file_type, do_transcript, do_summary, ou
             if out_txt:
                 formats.append(f"#{base}.txt")
             if formats:
-                lines.append(f"   - 요약: {', '.join(formats)}")
+                tree_items.append(f"요약: {', '.join(formats)}")
+        
+        # 트리 구조로 표시
+        for i, item in enumerate(tree_items):
+            if i < len(tree_items) - 1:
+                lines.append(f" ├─ {item}")
+            else:
+                lines.append(f" └─ {item}")
         
         output_list.append("\n".join(lines))
     
-    output_section = "\n".join(output_list)
+    output_section = "\n\n".join(output_list)
     
+    # 작업 내용 설명
     tasks = []
     if is_audio:
         tasks.append("받아쓰기")
     if do_transcript:
-        tasks.append("번역" if is_audio else "정리")
+        tasks.append("번역/정리")
     if do_summary:
         tasks.append("요약")
     task_desc = ", ".join(tasks) if tasks else "정리"
     
+    # 현재 시간
+    now = get_kst_now()
+    date_str = now.strftime("%Y. %m/%d (%H:%M)")
+    
     body = f"""안녕하세요! 캐피입니다 😊
-인터뷰 정리 결과를 보내드립니다.
 
-📄 다음 파일들을 제게 주셨어요 ({len(files)}개)
-─────────────────────────────────────────────────
-{input_section}
+🎯인터뷰 정리 결과입니다.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-✅ 주신 파일별로 {task_desc}를 했습니다
-─────────────────────────────────────────────────
 {output_section}
 
-※ 첨부파일을 확인해주세요!
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-💰 열심히 하고 있는데 그래도 이 만큼 걸리네요 ⏱️
-─────────────────────────────────────────────────
-• 소요 시간/비용: {minutes}분 {seconds}초 / 약 {costs['total_krw']:,.0f}원
+💰시간/비용은 이만큼 들어 갔어요
+- 파일: {len(files)}개 파일 ({task_desc})
+- 시간: {minutes}분 {seconds}초
+- 비용: 약 {costs['total_krw']:,.0f}원
+
+오늘도 좋은 하루 되세요 😊
+캐피 올림
+{date_str}
+
+
+※ 모든 파일은 첨부파일에서 확인하실 수 있습니다. 💾
 """
     return body
 
@@ -729,9 +680,11 @@ def process_job_background(job_id, files_data, config):
         }
         save_job_state(job_id, state)
         
-        # 프롬프트 로드
+        # 프롬프트 및 옵션 로드
         transcript_prompt = config.get('transcript_prompt', '')
         summary_prompt = config.get('summary_prompt', '')
+        do_whisper = config.get('do_whisper', False)
+        email_format = config.get('email_format', '압축파일만')
         
         # 각 파일 처리
         for idx, file_data in enumerate(files_data):
@@ -754,20 +707,14 @@ def process_job_background(job_id, files_data, config):
             
             # 오디오 처리
             if config['is_audio']:
-                # 임시 파일로 저장
                 temp_file = io.BytesIO(file_data['content'])
                 temp_file.name = filename
                 temp_file.size = len(file_data['content'])
                 
-                text, duration = transcribe_audio(
-                    temp_file, 
-                    task=config['whisper_task'],
-                    model=config['stt_model']
-                )
+                text, duration = transcribe_audio(temp_file, task="transcribe")
                 
                 if text:
                     result['whisper'] = text
-                    save_file_result(job_id, filename, 'whisper', text)
                     state['total_audio_min'] += (duration or 0) / 60
                     source_text = text
                 else:
@@ -791,7 +738,6 @@ def process_job_background(job_id, files_data, config):
                 
                 if transcript:
                     result['transcript'] = transcript
-                    save_file_result(job_id, filename, 'transcript', transcript)
                     state['total_in_tok'] += in_tok
                     state['total_out_tok'] += out_tok
                     source_text = transcript
@@ -813,7 +759,6 @@ def process_job_background(job_id, files_data, config):
                 
                 if summary:
                     result['summary'] = summary
-                    save_file_result(job_id, filename, 'summary', summary)
                     state['total_in_tok'] += in_tok
                     state['total_out_tok'] += out_tok
             
@@ -831,7 +776,7 @@ def process_job_background(job_id, files_data, config):
             for filename, result in state['results'].items():
                 base = result['base_name']
                 
-                if result.get('whisper'):
+                if result.get('whisper') and do_whisper:
                     zf.writestr(f"{base}_whisper.txt", result['whisper'])
                 
                 if result.get('transcript'):
@@ -871,8 +816,7 @@ def process_job_background(job_id, files_data, config):
             costs = calculate_costs(
                 state['total_audio_min'],
                 state['total_in_tok'],
-                state['total_out_tok'],
-                config['stt_model']
+                state['total_out_tok']
             )
             
             minutes = int(elapsed // 60)
@@ -882,6 +826,7 @@ def process_job_background(job_id, files_data, config):
                 list(state['results'].values()),
                 [{'name': fd['name']} for fd in files_data],
                 'audio' if config['is_audio'] else 'text',
+                do_whisper,
                 config['do_transcript'],
                 config['do_summary'],
                 config['out_md'],
@@ -895,11 +840,48 @@ def process_job_background(job_id, files_data, config):
             first_filename = files_data[0]['name']
             zip_filename = generate_zip_filename(config['emails'], first_filename)
             
+            # 첨부파일 준비 - email_format에 따라
+            attachments = []
+            
+            # 개별파일 첨부
+            if email_format in ['개별파일만', '개별 + 압축파일 모두']:
+                for filename, result in state['results'].items():
+                    base = result['base_name']
+                    
+                    if result.get('whisper') and do_whisper:
+                        attachments.append((f"{base}_whisper.txt", result['whisper'].encode('utf-8')))
+                    
+                    if result.get('transcript'):
+                        if config['out_md']:
+                            attachments.append((f"{base}.md", result['transcript'].encode('utf-8')))
+                        if config['out_docx']:
+                            docx = create_docx(result['transcript'], base)
+                            attachments.append((f"{base}.docx", docx.read()))
+                        if config['out_txt']:
+                            plain = re.sub(r'[#*_\-]+', '', result['transcript'])
+                            plain = re.sub(r'\n{3,}', '\n\n', plain)
+                            attachments.append((f"{base}.txt", plain.encode('utf-8')))
+                    
+                    if result.get('summary'):
+                        if config['out_md']:
+                            attachments.append((f"#{base}.md", result['summary'].encode('utf-8')))
+                        if config['out_docx']:
+                            docx = create_docx(result['summary'], f"#{base}")
+                            attachments.append((f"#{base}.docx", docx.read()))
+                        if config['out_txt']:
+                            plain = re.sub(r'[#*_\-]+', '', result['summary'])
+                            plain = re.sub(r'\n{3,}', '\n\n', plain)
+                            attachments.append((f"#{base}.txt", plain.encode('utf-8')))
+            
+            # 압축파일 첨부
+            if email_format in ['압축파일만', '개별 + 압축파일 모두']:
+                attachments.append((zip_filename, zip_data))
+            
             send_email(
                 config['emails'],
                 f"[캐피 인터뷰] 인터뷰 정리 결과 - {get_kst_now().strftime('%Y-%m-%d')}",
                 body,
-                [(zip_filename, zip_data)]
+                attachments
             )
         
         # 완료 상태
@@ -933,11 +915,11 @@ def check_password():
             st.session_state["auth"] = False
     
     if "auth" not in st.session_state:
-        st.markdown("## 🔒 접근 제한")
+        st.markdown("### 🔐 캐피 친구는 들어올 수 있어요")
         st.text_input("비밀번호", type="password", on_change=entered, key="pw")
         return False
     elif not st.session_state["auth"]:
-        st.markdown("## 🔒 접근 제한")
+        st.markdown("### 🔐 캐피 친구는 들어올 수 있어요")
         st.text_input("비밀번호", type="password", on_change=entered, key="pw")
         st.error("❌ 비밀번호가 틀렸습니다.")
         return False
@@ -947,55 +929,55 @@ def check_password():
 # 진행 상태 표시 함수
 # ============================================
 def show_progress_ui(job_state):
-    """진행 상태를 시각적으로 표시"""
+    """진행 상태를 시각적으로 표시 - 기존 스타일 유지"""
     if not job_state:
         return
     
     status = job_state.get('status', 'processing')
     current_step = job_state.get('current_step', '')
     current_file = job_state.get('current_file', '')
-    progress = job_state.get('progress', 0)
     completed = job_state.get('completed_files', 0)
     total = job_state.get('total_files', 0)
     
-    # 진행 단계 정의
-    steps = ['init', 'transcribe', 'transcript', 'summary', 'zip', 'email', 'done']
-    step_labels = {
-        'init': '시작',
-        'transcribe': '받아쓰기',
-        'read': '파일읽기',
-        'transcript': '노트정리',
-        'summary': '요약',
-        'zip': '파일생성',
-        'email': '이메일',
-        'done': '완료'
+    # 진행 단계 정의 (기존 로직)
+    steps = ['받아쓰기', '번역/노트정리', '요약', '파일생성', '이메일발송']
+    
+    # 현재 단계 인덱스 매핑
+    step_map = {
+        'init': 0,
+        'transcribe': 0,
+        'read': 0,
+        'transcript': 1,
+        'summary': 2,
+        'zip': 3,
+        'email': 4,
+        'done': 5
     }
+    current_idx = step_map.get(current_step, 0)
     
-    # 단계별 상태 표시
-    step_html = ""
-    for step in steps:
-        if step == 'done':
-            label = '완료'
-            css_class = 'step-done' if status == 'completed' else 'step-pending'
-        else:
-            label = step_labels.get(step, step)
-            if step == current_step or (step == 'transcribe' and current_step == 'read'):
-                css_class = 'step-active'
-            elif steps.index(step) < steps.index(current_step if current_step in steps else 'init'):
-                css_class = 'step-done'
+    # 단계별 상태 표시 (기존 스타일)
+    cols = st.columns(len(steps))
+    for i, step in enumerate(steps):
+        with cols[i]:
+            if i < current_idx:
+                st.markdown(f"<div style='text-align:center;color:#51cf66;font-size:0.9rem'>✓<br>{step}</div>", unsafe_allow_html=True)
+            elif i == current_idx:
+                st.markdown(f"<div style='text-align:center;color:#ff6b6b;font-weight:bold;font-size:0.9rem'>●<br>{step}</div>", unsafe_allow_html=True)
             else:
-                css_class = 'step-pending'
-        
-        step_html += f'<span class="progress-step {css_class}">{label}</span>'
-    
-    st.markdown(step_html, unsafe_allow_html=True)
-    
-    # 진행률 표시
-    st.progress(progress / 100)
+                st.markdown(f"<div style='text-align:center;color:#aaa;font-size:0.9rem'>○<br>{step}</div>", unsafe_allow_html=True)
     
     # 현재 작업 표시
     if current_file:
-        st.caption(f"📄 처리 중: {current_file} ({completed}/{total})")
+        if current_step in ['transcribe', 'read']:
+            st.caption(f"🎧 받아쓰는 중... ({completed+1}/{total}) {current_file}")
+        elif current_step == 'transcript':
+            st.caption(f"📝 노트 정리 중... ({completed+1}/{total})")
+        elif current_step == 'summary':
+            st.caption(f"📋 요약 작성 중... ({completed+1}/{total})")
+        elif current_step == 'zip':
+            st.caption(f"📁 파일 생성 중...")
+        elif current_step == 'email':
+            st.caption(f"📧 이메일 발송 중...")
     
     # 에러 표시
     if job_state.get('error'):
@@ -1011,9 +993,6 @@ def main():
     # Job 시스템 초기화
     init_job_system()
     
-    # 헤더
-    st.markdown("# 😊 캐피 인터뷰")
-    
     # 프롬프트 로드
     try:
         transcript_prompt = st.secrets.get("transcript_prompt", "")
@@ -1025,20 +1004,30 @@ def main():
     # 진행 중인 Job이 있는지 확인
     active_job_id = st.session_state.get('active_job_id')
     
+    # 헤더 - 진행 상태에 따라 다르게 표시
+    st.markdown("### 😊 캐피 인터뷰")
+    if active_job_id:
+        job_state = load_job_state(active_job_id)
+        if job_state and job_state['status'] == 'processing':
+            st.markdown("꼼꼼하게 정리해 볼게요! 기대해 주세요 📎")
+        else:
+            st.markdown(" 퇴근하실 때 정리를 부탁하고 창을 열어두면 아침에 메일로 받아 보실 수 있어요 ^^* 보안이 중요한 인터뷰는 저에게 주시면 안 돼요ㅜㅠ. 부탁드릴 음원/텍스트를 올려주세요!")
+    else:
+        st.markdown(" 퇴근하실 때 정리를 부탁하고 창을 열어두면 아침에 메일로 받아 보실 수 있어요 ^^* 보안이 중요한 인터뷰는 저에게 주시면 안 돼요ㅜㅠ. 부탁드릴 음원/텍스트를 올려주세요!")
+    
+    st.markdown("---")
+    
     if active_job_id:
         # Job 상태 로드
         job_state = load_job_state(active_job_id)
         
         if job_state and job_state['status'] == 'processing':
             # 진행 중 - 상태 표시
-            st.markdown("꼼꼼하게 정리해 볼게요! 기대해 주세요 🔎")
-            st.markdown("---")
-            
-            # 진행 상태 표시
             show_progress_ui(job_state)
             
-            # 안내 메시지
-            st.info("🔨 작업이 진행 중입니다! 화면을 닫아도 캐피는 계속 일해요 😊")
+            # 안내 메시지 - 기존과 동일하게
+            st.markdown("---")
+            st.info("📨 작업이 시작되었습니다! 화면을 닫지 마세요. \n (끝나는 대로 결과는 이메일로 보내 드릴께요)")
             
             # 자동 새로고침 (3초마다)
             time.sleep(HEARTBEAT_INTERVAL)
@@ -1046,10 +1035,6 @@ def main():
             
         elif job_state and job_state['status'] == 'completed':
             # 완료 - 결과 표시
-            st.markdown("인터뷰를 정리하는 캐피입니다. 음원/텍스트를 올려주세요! 🔎")
-            st.markdown("---")
-            
-            # 완료 상태 표시
             show_progress_ui(job_state)
             
             st.success("✅ 모든 작업이 완료되었습니다!")
@@ -1059,12 +1044,10 @@ def main():
             minutes = int(elapsed // 60)
             seconds = int(elapsed % 60)
             
-            config = st.session_state.get('job_config', {})
             costs = calculate_costs(
                 job_state.get('total_audio_min', 0),
                 job_state.get('total_in_tok', 0),
-                job_state.get('total_out_tok', 0),
-                config.get('stt_model', 'whisper-1')
+                job_state.get('total_out_tok', 0)
             )
             
             col1, col2, col3 = st.columns(3)
@@ -1081,6 +1064,7 @@ def main():
                 with open(zip_path, 'rb') as f:
                     zip_data = f.read()
                 
+                config = st.session_state.get('job_config', {})
                 first_file = list(job_state['results'].keys())[0] if job_state['results'] else 'interview'
                 zip_filename = generate_zip_filename(config.get('emails', []), first_file)
                 
@@ -1103,9 +1087,6 @@ def main():
         
         elif job_state and job_state['status'] == 'error':
             # 에러 - 재시도 옵션
-            st.markdown("인터뷰를 정리하는 캐피입니다. 음원/텍스트를 올려주세요! 🔎")
-            st.markdown("---")
-            
             st.error(f"❌ 작업 중 오류가 발생했습니다: {job_state.get('error', '알 수 없는 오류')}")
             
             if st.button("🔄 다시 시도", use_container_width=True):
@@ -1117,9 +1098,6 @@ def main():
             return
     
     # 새 작업 시작 - 기존 UI 그대로
-    st.markdown("인터뷰를 정리하는 캐피입니다. 음원/텍스트를 올려주세요! 🔎")
-    st.markdown("---")
-    
     # 파일 업로더
     uploaded_files = st.file_uploader(
         "파일 선택",
@@ -1155,53 +1133,45 @@ def main():
                 
                 st.markdown("---")
                 
-                # 옵션 선택
+                # 옵션 선택 - 기존과 동일
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.markdown("**📋 정리 옵션**")
+                    st.markdown("**📝 정리 옵션**")
                     if is_audio:
-                        do_transcript = st.checkbox("노트 정리", value=True)
+                        do_whisper = st.checkbox("원어 받아쓰기", value=True)
+                        do_transcript = st.checkbox("번역/노트정리", value=True)
                     else:
-                        do_transcript = st.checkbox("풀 트랜스크립트", value=True)
-                    do_summary = st.checkbox("요약문 작성", value=False)
+                        do_whisper = False  # 텍스트 파일은 받아쓰기 불필요
+                        do_transcript = st.checkbox("번역/노트정리", value=True)
+                    do_summary = st.checkbox("요약문 작성", value=True)
                 
                 with col2:
                     st.markdown("**📁 출력 형식**")
                     out_md = st.checkbox("Markdown", value=True)
                     out_docx = st.checkbox("Word", value=True)
-                    out_txt = st.checkbox("Text", value=False)
+                    out_txt = st.checkbox("Text", value=True)
                 
-                # 음성 파일일 때 모델 선택
-                if is_audio:
-                    st.markdown("---")
-                    st.markdown("**🎤 음성 인식 모델**")
-                    stt_model = st.radio(
-                        "음성 인식 모델 선택",
-                        options=["gpt-4o-transcribe", "whisper-1", "gpt-4o-mini-transcribe"],
-                        format_func=lambda x: {
-                            "gpt-4o-transcribe": "GPT-4o ($0.006/분) - 최고 정확도, 환각 감소",
-                            "whisper-1": "Whisper ($0.006/분) - 안정적, 타임스탬프 지원",
-                            "gpt-4o-mini-transcribe": "GPT-4o Mini ($0.003/분) - 50% 저렴, 빠름"
-                        }[x],
-                        index=0,
-                        label_visibility="collapsed"
-                    )
-                    
-                    whisper_task = st.radio(
-                        "전사 방식",
-                        ["원래 언어 그대로요", "영어로 번역해 주세요"],
-                        label_visibility="collapsed"
-                    )
-                    whisper_task_value = "transcribe" if whisper_task == "원래 언어 그대로요" else "translate"
-                else:
-                    stt_model = "whisper-1"
-                    whisper_task_value = "transcribe"
+                st.markdown("---")
+                
+                # 메일 형식 옵션 추가
+                st.markdown("**📧 메일 첨부파일 형식**")
+                email_format = st.radio(
+                    "첨부파일 형식 선택",
+                    options=["압축파일만", "개별파일만", "개별 + 압축파일 모두"],
+                    index=0,  # 기본값: 압축파일만
+                    label_visibility="collapsed",
+                    horizontal=True
+                )
                 
                 st.markdown("---")
                 
                 # 이메일 입력 (필수)
                 st.markdown("**📧 결과 받을 이메일** (필수)")
-                email_input = st.text_input("이메일 주소 (콤마로 구분, 최대 5명)", placeholder="user@company.com", label_visibility="collapsed")
+                email_input = st.text_input(
+                    "이메일 주소 (콤마로 구분, 최대 5명)", 
+                    placeholder="user@company.com", 
+                    label_visibility="collapsed"
+                )
                 emails = [e.strip() for e in email_input.split(',') if e.strip() and '@' in e][:5]
                 
                 if emails:
@@ -1231,14 +1201,14 @@ def main():
                     # 설정 저장
                     config = {
                         'is_audio': is_audio,
+                        'do_whisper': do_whisper,
                         'do_transcript': do_transcript,
                         'do_summary': do_summary,
                         'out_md': out_md,
                         'out_docx': out_docx,
                         'out_txt': out_txt,
+                        'email_format': email_format,
                         'emails': emails,
-                        'stt_model': stt_model,
-                        'whisper_task': whisper_task_value,
                         'transcript_prompt': transcript_prompt,
                         'summary_prompt': summary_prompt
                     }
@@ -1258,7 +1228,7 @@ def main():
                     # 페이지 새로고침
                     st.rerun()
     
-    # 기존 작업물 다운로드
+    # 기존 작업물 다운로드 - 기존과 동일
     st.markdown("---")
     
     # 오늘의 사용량 표시
