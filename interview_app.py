@@ -1330,7 +1330,7 @@ def main():
                 
                 time.sleep(HEARTBEAT_INTERVAL)
                 st.rerun()
-                return  # 중요: rerun 후 나머지 코드 실행 방지
+                st.stop()  # 강제 중단 (rerun exception 보험)
             elif job_state['status'] == 'completed':
                 st.markdown("모든 작업이 완료되었습니다! 이메일도 보내드렸어요 📧")
                 show_completed_ui(job_state)
