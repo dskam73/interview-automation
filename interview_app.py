@@ -1319,19 +1319,19 @@ def main():
                 show_progress_ui(job_state)
                 time.sleep(HEARTBEAT_INTERVAL)
                 st.rerun()
-                return  # rerun 전에 return 추가
+                return  # 중요: rerun 후 나머지 코드 실행 방지
             elif job_state['status'] == 'completed':
                 st.markdown("모든 작업이 완료되었습니다! 이메일도 보내드렸어요 📧")
                 show_completed_ui(job_state)
-                return  # 완료 화면 후에도 return
+                return
             elif job_state['status'] == 'error':
                 st.markdown("작업 중 문제가 발생했어요 😢")
                 show_error_ui(job_state)
-                return  # 에러 화면 후에도 return
+                return
         else:
             del st.session_state['active_job_id']
             st.rerun()
-            return  # rerun 전에 return 추가
+            return  # rerun 후 return 추가
     
     # 여기서부터는 active_job_id가 없을 때만 실행됨
     st.markdown("퇴근하실 때 정리를 부탁하고 창을 열어두면 아침에 메일로 받아 보실 수 있어요 ^^*...")
