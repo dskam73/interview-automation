@@ -1332,7 +1332,9 @@ def main():
     
     # 여기서부터는 active_job_id가 없을 때만 실행됨
     st.markdown("퇴근하실 때 정리를 부탁하고 창을 열어두면 아침에 메일로 받아 보실 수 있어요 ^^*...")
-
+    # 여기서부터는 active_job_id가 없을 때만 실행됨
+    st.markdown("퇴근하실 때 정리를 부탁하고 창을 열어두면 아침에 메일로 받아 보실 수 있어요 ^^*...")
+    
     uploaded_files = st.file_uploader(
         "파일 선택",
         type=['mp3', 'wav', 'm4a', 'ogg', 'webm', 'txt', 'md'],
@@ -1434,25 +1436,51 @@ def main():
                     st.warning("📧 결과를 받을 이메일을 입력해주세요.")
                 
                 if st.button("🚀 시작", type="primary", use_container_width=True, disabled=not can_start):
-                    job_id = create_job_id()
-                    
-                    # Job 초기 상태 즉시 저장
-                    initial_state = {
-                        'status': 'processing',
-                        'job_id': job_id,
-                        'start_time': get_kst_now().isoformat(),
-                        'current_step': 'init',
-                        'current_file': '',
-                        'progress': 0,
-                        'completed_files': 0,
-                        'total_files': len(files),
-                        'files': [f.name for f in files],
-                        'results': {},
-                        'total_audio_min': 0,
-                        'total_in_tok': 0,
-                        'total_out_tok': 0,
-                        'error': None,
-                        'config': {
+                    # 디버깅: 사용자에게 명확한 피드백
+                    with st.spinner("작업을 시작하고 있습니다..."):
+                        job_id = create_job_id()
+                        
+                        # Job 초기 상태 즉시 저장
+                        initial_state = {
+                            'status': 'processing',
+                            'job_id': job_id,
+                            'start_time': get_kst_now().isoformat(),
+                            'current_step': 'init',
+                            'current_file': '',
+                            'progress': 0,
+                            'completed_files': 0,
+                            'total_files': len(files),
+                            'files': [f.name for f in files],
+                            'results': {},
+                            'total_audio_min': 0,
+                            'total_in_tok': 0,
+                            'total_out_tok': 0,
+                            'error': None,
+                            'config': {
+                                'file_type': file_type,
+                                'do_transcript': do_transcript,
+                                'do_summary': do_summary,
+                                'out_md': out_md,
+                                'out_docx': out_docx,
+                                'out_txt': out_txt,
+                                'stt_model': stt_model,
+                                'email_attach': email_attach,
+                                'emails': emails,
+                                'files': [f.name for f in files]
+                            }
+                        }
+                        save_job_state(job_id, initial_state)
+                        
+                        # 파일 데이터 준비
+                        files_data = []
+                        for f in files:
+                            files_data.append({
+                                'filename': f.name,
+                                'data': f.read()
+                            })
+                            f.seek(0)
+                        
+                        config = {
                             'file_type': file_type,
                             'do_transcript': do_transcript,
                             'do_summary': do_summary,
@@ -1464,43 +1492,19 @@ def main():
                             'emails': emails,
                             'files': [f.name for f in files]
                         }
-                    }
-                    save_job_state(job_id, initial_state)
+                        
+                        # 세션에 job_id 저장 (진행 화면으로 전환)
+                        st.session_state.active_job_id = job_id
+                        
+                        # 백그라운드 스레드 시작
+                        thread = threading.Thread(
+                            target=process_job_background,
+                            args=(job_id, files_data, config),
+                            daemon=True
+                        )
+                        thread.start()
                     
-                    # 파일 데이터 준비
-                    files_data = []
-                    for f in files:
-                        files_data.append({
-                            'filename': f.name,
-                            'data': f.read()
-                        })
-                        f.seek(0)
-                    
-                    config = {
-                        'file_type': file_type,
-                        'do_transcript': do_transcript,
-                        'do_summary': do_summary,
-                        'out_md': out_md,
-                        'out_docx': out_docx,
-                        'out_txt': out_txt,
-                        'stt_model': stt_model,
-                        'email_attach': email_attach,
-                        'emails': emails,
-                        'files': [f.name for f in files]
-                    }
-                    
-                    # 세션에 job_id 저장 (진행 화면으로 전환)
-                    st.session_state.active_job_id = job_id
-                    
-                    # 백그라운드 스레드 시작
-                    thread = threading.Thread(
-                        target=process_job_background,
-                        args=(job_id, files_data, config),
-                        daemon=True
-                    )
-                    thread.start()
-                    
-                    # 즉시 rerun하여 진행 화면 표시
+                    # spinner 종료 후 즉시 rerun
                     st.rerun()
     else:
         # 파일이 업로드되지 않았을 때만 최근 작업물 표시
