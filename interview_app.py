@@ -555,6 +555,56 @@ def calculate_costs(audio_min=0, in_tok=0, out_tok=0, stt_model="whisper-1"):
 # ============================================
 # 백그라운드 Job 처리
 # ============================================
+def generate_email_body(files_data, config, elapsed, costs):
+    """이메일 본문 생성 - 기존 형식"""
+    file_type = config['file_type']
+    is_audio = file_type == 'audio'
+    do_transcript = config['do_transcript']
+    do_summary = config['do_summary']
+    
+    # 파일 목록
+    file_list = ""
+    for idx, f in enumerate(files_data, 1):
+        file_list += f"{idx}. {f['filename']}\n"
+    
+    # 작업 내용
+    tasks = []
+    if is_audio:
+        tasks.append("받아쓰기")
+    if do_transcript:
+        tasks.append("정리")
+    if do_summary:
+        tasks.append("요약")
+    task_str = ", ".join(tasks)
+    
+    # 시간
+    minutes = int(elapsed // 60)
+    seconds = int(elapsed % 60)
+    
+    # 현재 시간 (KST)
+    now = get_kst_now()
+    date_str = now.strftime('%Y. %m/%d (%H:%M)')
+    
+    body = f"""안녕하세요! 캐피입니다 😊
+인터뷰 정리 결과를 보내드립니다.
+
+📄 다음 파일들을 처리했습니다 ({len(files_data)}개)
+─────────────────────────────────────────
+{file_list}
+✅ {task_str}를 완료했습니다
+
+※ 첨부파일을 확인해주세요!
+
+💰 처리 비용: 약 {costs['total_krw']:,.0f}원
+
+오늘도 좋은 하루 되세요 😃
+캐피가 드립니다.
+
+{date_str}
+"""
+    return body
+
+
 def process_job_background(job_id, files_data, config):
     """백그라운드에서 Job 처리"""
     job_dir = os.path.join(JOB_DIR, job_id)
@@ -575,7 +625,8 @@ def process_job_background(job_id, files_data, config):
         'total_audio_min': 0,
         'total_in_tok': 0,
         'total_out_tok': 0,
-        'error': None
+        'error': None,
+        'config': config  # config 저장
     }
     save_job_state(job_id, state)
     
@@ -701,28 +752,47 @@ def process_job_background(job_id, files_data, config):
         elapsed = time.time() - datetime.fromisoformat(state['start_time']).timestamp()
         costs = calculate_costs(state['total_audio_min'], state['total_in_tok'], state['total_out_tok'], stt_model)
         
-        minutes = int(elapsed // 60)
-        seconds = int(elapsed % 60)
-        
         # 이메일 본문
-        body = f"""안녕하세요! 캐피입니다 😊
-인터뷰 정리 결과를 보내드립니다.
-
-📄 처리 파일: {len(files_data)}개
-⏱️ 소요 시간: {minutes}분 {seconds}초
-💰 비용: 약 {costs['total_krw']:,.0f}원
-
-첨부파일을 확인해주세요!
-
-{get_kst_now().strftime('%Y. %m/%d (%H:%M)')}
-"""
+        body = generate_email_body(files_data, config, elapsed, costs)
         
-        # 첨부파일
-        with open(zip_path, 'rb') as f:
-            zip_data = f.read()
+        # 첨부파일 준비 - 선택한 형식대로
+        attachments = []
         
-        attachments = [(f"interview_{get_kst_now().strftime('%y%m%d')}.zip", zip_data)]
-        send_email(emails, "인터뷰 정리가 도착했습니다", body, attachments)
+        for filename, result in state['results'].items():
+            base = result['base_name']
+            
+            # Whisper 원본
+            if result.get('whisper'):
+                attachments.append((f"{base}_whisper.txt", result['whisper'].encode('utf-8')))
+            
+            # 트랜스크립트
+            if result.get('transcript'):
+                if out_md:
+                    attachments.append((f"{base}.md", result['transcript'].encode('utf-8')))
+                if out_docx:
+                    docx_data = create_docx(result['transcript'], base)
+                    attachments.append((f"{base}.docx", docx_data))
+                if out_txt:
+                    plain = re.sub(r'[#*_\-]+', '', result['transcript'])
+                    attachments.append((f"{base}.txt", plain.encode('utf-8')))
+            
+            # 요약
+            if result.get('summary'):
+                if out_md:
+                    attachments.append((f"#{base}.md", result['summary'].encode('utf-8')))
+                if out_docx:
+                    docx_data = create_docx(result['summary'], f"#{base}")
+                    attachments.append((f"#{base}.docx", docx_data))
+                if out_txt:
+                    plain = re.sub(r'[#*_\-]+', '', result['summary'])
+                    attachments.append((f"#{base}.txt", plain.encode('utf-8')))
+        
+        # 제목
+        first_file = files_data[0]['filename']
+        first_base = first_file.rsplit('.', 1)[0]
+        subject = f"[캐피 인터뷰] 인터뷰 정리 완료 - {first_base}"
+        
+        send_email(emails, subject, body, attachments)
         
         # 완료
         state['status'] = 'completed'
@@ -779,7 +849,13 @@ def show_progress_ui(job_state):
         st.caption(f"📄 {get_step_display(current_step)}... ({progress}%)")
     
     st.markdown("---")
-    st.info("📨 작업이 시작되었습니다! 화면을 닫지 마세요.\n(끝나는 대로 결과는 이메일로 보내 드릴께요)")
+    st.info("📨 작업이 시작되었습니다! 끝나면 메일로 보내 드릴께요\n(화면을 닫아도 됩니다)")
+    
+    # 뒤로가기 버튼
+    if st.button("🏠 처음 화면으로", use_container_width=True):
+        if 'active_job_id' in st.session_state:
+            del st.session_state['active_job_id']
+        st.rerun()
 
 def show_completed_ui(job_state):
     """완료 화면"""
@@ -805,15 +881,128 @@ def show_completed_ui(job_state):
         total_cost = job_state.get('total_cost_krw', 0)
         st.metric("💰 비용", f"₩{total_cost:,.0f}")
     
-    job_id = st.session_state.get('active_job_id')
-    zip_path = os.path.join(JOB_DIR, job_id, 'output.zip')
+    st.markdown("---")
+    st.markdown("### 📦 다운로드")
     
+    job_id = st.session_state.get('active_job_id')
+    results_dir = os.path.join(JOB_DIR, job_id, 'results')
+    
+    # 개별 파일 다운로드
+    results = job_state.get('results', {})
+    config = job_state.get('config', {})
+    out_md = config.get('out_md', True)
+    out_docx = config.get('out_docx', True)
+    out_txt = config.get('out_txt', False)
+    
+    for filename, result in results.items():
+        base_name = result['base_name']
+        st.markdown(f"**📄 {filename}**")
+        
+        cols = st.columns(4)
+        col_idx = 0
+        
+        # Whisper 원본
+        if result.get('whisper'):
+            whisper_file = os.path.join(results_dir, f"{base_name}_whisper.txt")
+            if os.path.exists(whisper_file):
+                with open(whisper_file, 'rb') as f:
+                    with cols[col_idx % 4]:
+                        st.download_button(
+                            "원본 TXT",
+                            f.read(),
+                            f"{base_name}_whisper.txt",
+                            key=f"whisper_{base_name}"
+                        )
+                        col_idx += 1
+        
+        # 트랜스크립트
+        if result.get('transcript'):
+            transcript_file = os.path.join(results_dir, f"{base_name}_transcript.txt")
+            if os.path.exists(transcript_file):
+                with open(transcript_file, 'r', encoding='utf-8') as f:
+                    transcript_content = f.read()
+                
+                if out_md:
+                    with cols[col_idx % 4]:
+                        st.download_button(
+                            "정리 MD",
+                            transcript_content,
+                            f"{base_name}.md",
+                            key=f"trans_md_{base_name}"
+                        )
+                        col_idx += 1
+                
+                if out_docx:
+                    docx_data = create_docx(transcript_content, base_name)
+                    with cols[col_idx % 4]:
+                        st.download_button(
+                            "정리 DOCX",
+                            docx_data,
+                            f"{base_name}.docx",
+                            key=f"trans_docx_{base_name}"
+                        )
+                        col_idx += 1
+                
+                if out_txt:
+                    plain = re.sub(r'[#*_\-]+', '', transcript_content)
+                    with cols[col_idx % 4]:
+                        st.download_button(
+                            "정리 TXT",
+                            plain,
+                            f"{base_name}.txt",
+                            key=f"trans_txt_{base_name}"
+                        )
+                        col_idx += 1
+        
+        # 요약
+        if result.get('summary'):
+            summary_file = os.path.join(results_dir, f"{base_name}_summary.txt")
+            if os.path.exists(summary_file):
+                with open(summary_file, 'r', encoding='utf-8') as f:
+                    summary_content = f.read()
+                
+                if out_md:
+                    with cols[col_idx % 4]:
+                        st.download_button(
+                            "요약 MD",
+                            summary_content,
+                            f"#{base_name}.md",
+                            key=f"sum_md_{base_name}"
+                        )
+                        col_idx += 1
+                
+                if out_docx:
+                    docx_data = create_docx(summary_content, f"#{base_name}")
+                    with cols[col_idx % 4]:
+                        st.download_button(
+                            "요약 DOCX",
+                            docx_data,
+                            f"#{base_name}.docx",
+                            key=f"sum_docx_{base_name}"
+                        )
+                        col_idx += 1
+                
+                if out_txt:
+                    plain = re.sub(r'[#*_\-]+', '', summary_content)
+                    with cols[col_idx % 4]:
+                        st.download_button(
+                            "요약 TXT",
+                            plain,
+                            f"#{base_name}.txt",
+                            key=f"sum_txt_{base_name}"
+                        )
+                        col_idx += 1
+        
+        st.markdown("---")
+    
+    # 전체 ZIP 다운로드
+    zip_path = os.path.join(JOB_DIR, job_id, 'output.zip')
     if os.path.exists(zip_path):
         with open(zip_path, 'rb') as f:
             zip_data = f.read()
         
         st.download_button(
-            "📦 바로 다운로드",
+            "📦 전체 ZIP 다운로드",
             zip_data,
             f"interview_{get_kst_now().strftime('%y%m%d')}.zip",
             "application/zip",
