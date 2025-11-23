@@ -955,7 +955,7 @@ def show_steps(current_idx, steps):
                 st.markdown(f"<div style='text-align:center;color:#aaa;font-size:0.9rem'>○<br>{step}</div>", unsafe_allow_html=True)
 
 def show_progress_ui(job_state):
-    """진행 중 화면 - 파일 업로드 UI 제거"""
+    """진행 중 화면 - 이미지와 동일한 UI"""
     steps = ['받아쓰기', '번역정리', '요약', '파일생성', '이메일']
     current_step = job_state.get('current_step', 'init')
     
@@ -968,23 +968,75 @@ def show_progress_ui(job_state):
     show_steps(current_idx, steps)
     
     current_file = job_state.get('current_file', '')
-    progress = job_state.get('progress', 0)
     completed = job_state.get('completed_files', 0)
     total = job_state.get('total_files', 0)
     
+    # 현재 처리 중인 파일 정보 표시
     if current_file:
-        st.caption(f"📄 {get_step_display(current_step)}... ({completed}/{total}) {current_file}")
-    else:
-        st.caption(f"📄 {get_step_display(current_step)}... ({progress}%)")
+        step_text = get_step_display(current_step)
+        st.caption(f"📄 {step_text}... ({completed}/{total}) {current_file}")
     
     st.markdown("---")
-    st.info("📨 작업이 시작되었습니다! 끝나면 이메일로 결과를 보내드릴게요\n(이 화면을 닫아도 캐피는 계속 일해요)")
     
-    # 뒤로가기 버튼
+    # 안내 메시지 박스
+    st.info("📨 작업이 시작되었습니다! 끝나면 이메일로 결과를 보내드릴게요 (이 화면을 닫아도 캐피는 계속 일해요)")
+    
+    # 처음 화면으로 버튼
     if st.button("🏠 처음 화면으로", use_container_width=True):
         if 'active_job_id' in st.session_state:
             del st.session_state['active_job_id']
         st.rerun()
+    
+    # 하단에 최근 작업물 표시 (완료됨 섹션만)
+    st.markdown("---")
+    
+    jobs = get_all_jobs(max_age_hours=24)
+    completed_jobs = [j for j in jobs if j['status'] == 'completed']
+    
+    if completed_jobs:
+        with st.expander(f"✅ **완료됨** ({len(completed_jobs)})", expanded=False):
+            for job in completed_jobs:
+                job_id = job['job_id']
+                files = job['files']
+                start_time = job['start_time']
+                
+                display_name = get_file_display_name(files)
+                time_ago = format_time_ago(start_time)
+                
+                expiry_time = start_time + timedelta(hours=24)
+                remaining = expiry_time - get_kst_now()
+                hours_left = int(remaining.total_seconds() / 3600)
+                
+                col1, col2 = st.columns([2, 2])
+                
+                with col1:
+                    st.markdown(f"**📄 {display_name}**")
+                    st.caption(f"⏱️ {time_ago} 완료 ({hours_left}시간 남음)")
+                
+                with col2:
+                    zip_path = os.path.join(JOB_DIR, job_id, 'output.zip')
+                    if os.path.exists(zip_path):
+                        with open(zip_path, 'rb') as f:
+                            zip_data = f.read()
+                        
+                        col_a, col_b = st.columns(2)
+                        with col_a:
+                            st.download_button("📦", zip_data, f"{display_name}.zip", "application/zip", key=f"dl_{job_id}")
+                        with col_b:
+                            if st.button("▶", key=f"result_{job_id}"):
+                                st.session_state.active_job_id = job_id
+                                st.rerun()
+                
+                st.markdown("---")
+    
+    # 사용량 표시
+    st.markdown("---")
+    usage = get_daily_usage()
+    col1, col2 = st.columns(2)
+    with col1:
+        st.caption(f"🎤 음성: {usage.get('audio', 0)}/{DAILY_LIMIT_AUDIO}개")
+    with col2:
+        st.caption(f"📄 텍스트: {usage.get('text', 0)}/{DAILY_LIMIT_TEXT}개")
 
 def show_completed_ui(job_state):
     """완료 화면 - .getvalue() 오류 수정"""
