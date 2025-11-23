@@ -1357,153 +1357,159 @@ def main():
         else:
             del st.session_state['active_job_id']
             st.rerun()
-    else:
-        st.markdown("퇴근하실 때 정리를 부탁하고 창을 열어두면 아침에 메일로 받아 보실 수 있어요 ^^*...")
         
-        uploaded_files = st.file_uploader(
-            "파일 선택",
-            type=['mp3', 'wav', 'm4a', 'ogg', 'webm', 'txt', 'md'],
-            accept_multiple_files=True,
-            label_visibility="collapsed"
-        )
+        # active_job_id가 있으면 여기서 함수 종료 (파일 업로드 UI 표시 안함)
+        return
+    
+    # 여기서부터는 active_job_id가 없을 때만 실행됨
+    st.markdown("퇴근하실 때 정리를 부탁하고 창을 열어두면 아침에 메일로 받아 보실 수 있어요 ^^*...")
+    # 여기서부터는 active_job_id가 없을 때만 실행됨
+    st.markdown("퇴근하실 때 정리를 부탁하고 창을 열어두면 아침에 메일로 받아 보실 수 있어요 ^^*...")
+    
+    uploaded_files = st.file_uploader(
+        "파일 선택",
+        type=['mp3', 'wav', 'm4a', 'ogg', 'webm', 'txt', 'md'],
+        accept_multiple_files=True,
+        label_visibility="collapsed"
+    )
+    
+    if uploaded_files:
+        audio_exts = ['mp3', 'wav', 'm4a', 'ogg', 'webm']
+        text_exts = ['txt', 'md']
         
-        if uploaded_files:
-            audio_exts = ['mp3', 'wav', 'm4a', 'ogg', 'webm']
-            text_exts = ['txt', 'md']
+        is_audio = any(f.name.split('.')[-1].lower() in audio_exts for f in uploaded_files)
+        is_text = any(f.name.split('.')[-1].lower() in text_exts for f in uploaded_files)
+        
+        if is_audio and is_text:
+            st.warning("⚠️ 음성 파일과 텍스트 파일을 섞어서 올릴 수 없어요. 한 종류만 올려주세요.")
+        else:
+            file_type = 'audio' if is_audio else 'text'
             
-            is_audio = any(f.name.split('.')[-1].lower() in audio_exts for f in uploaded_files)
-            is_text = any(f.name.split('.')[-1].lower() in text_exts for f in uploaded_files)
-            
-            if is_audio and is_text:
-                st.warning("⚠️ 음성 파일과 텍스트 파일을 섞어서 올릴 수 없어요. 한 종류만 올려주세요.")
+            usage = check_usage_limit(file_type, len(uploaded_files))
+            if not usage['can_process']:
+                st.error("⚠️ 오늘 처리 한도에 도달했어요. 내일 이용해주세요!")
             else:
-                file_type = 'audio' if is_audio else 'text'
+                files = uploaded_files[:min(MAX_FILES_PER_UPLOAD, usage['allowed'])]
+                if len(uploaded_files) > len(files):
+                    st.info(f"💡 {len(files)}개만 처리됩니다. (한도: {MAX_FILES_PER_UPLOAD}개/회, 남은 한도: {usage['remaining']}개/일)")
                 
-                usage = check_usage_limit(file_type, len(uploaded_files))
-                if not usage['can_process']:
-                    st.error("⚠️ 오늘 처리 한도에 도달했어요. 내일 이용해주세요!")
+                total_size = sum(f.size for f in files) / 1024 / 1024
+                st.caption(f"✅ {len(files)}개 파일 · {total_size:.1f} MB")
+                
+                st.markdown("---")
+                
+                # 작업 내용
+                st.markdown("**📝 작업 내용**")
+                if is_audio:
+                    do_transcript = st.checkbox("번역/노트정리", value=True)
                 else:
-                    files = uploaded_files[:min(MAX_FILES_PER_UPLOAD, usage['allowed'])]
-                    if len(uploaded_files) > len(files):
-                        st.info(f"💡 {len(files)}개만 처리됩니다. (한도: {MAX_FILES_PER_UPLOAD}개/회, 남은 한도: {usage['remaining']}개/일)")
-                    
-                    total_size = sum(f.size for f in files) / 1024 / 1024
-                    st.caption(f"✅ {len(files)}개 파일 · {total_size:.1f} MB")
-                    
-                    st.markdown("---")
-                    
-                    # 작업 내용
-                    st.markdown("**📝 작업 내용**")
-                    if is_audio:
-                        do_transcript = st.checkbox("번역/노트정리", value=True)
-                    else:
-                        do_transcript = st.checkbox("풀 트랜스크립트", value=True)
-                    do_summary = st.checkbox("요약문 작성", value=True)
-                    
-                    st.markdown("---")
-                    st.markdown("**📧 결과 받을 이메일** (필수)")
-                    email_input = st.text_input("이메일 주소 (콤마로 구분, 최대 5명)", placeholder="user@company.com", label_visibility="collapsed")
-                    emails = [e.strip() for e in email_input.split(',') if e.strip() and '@' in e][:5]
-                    
-                    if emails:
-                        st.caption(f"📬 {len(emails)}명: {', '.join(emails)}")
+                    do_transcript = st.checkbox("풀 트랜스크립트", value=True)
+                do_summary = st.checkbox("요약문 작성", value=True)
+                
+                st.markdown("---")
+                st.markdown("**📧 결과 받을 이메일** (필수)")
+                email_input = st.text_input("이메일 주소 (콤마로 구분, 최대 5명)", placeholder="user@company.com", label_visibility="collapsed")
+                emails = [e.strip() for e in email_input.split(',') if e.strip() and '@' in e][:5]
+                
+                if emails:
+                    st.caption(f"📬 {len(emails)}명: {', '.join(emails)}")
+                
+                st.markdown("")
+                st.info("💡 Word 파일 + ZIP으로 전송 (Whisper 모델 사용)")
+                
+                with st.expander("⚙️ 상세 옵션", expanded=False):
+                    st.markdown("##### 📄 출력 형식")
+                    out_docx = st.checkbox("Word 문서", value=True, key="opt_docx")
+                    out_md = st.checkbox("Markdown 문서", value=False, key="opt_md")
+                    out_txt = st.checkbox("Text 파일", value=False, key="opt_txt")
                     
                     st.markdown("")
-                    st.info("💡 Word 파일 + ZIP으로 전송 (Whisper 모델 사용)")
+                    st.markdown("##### 📧 이메일 첨부 방식")
+                    email_attach = st.radio(
+                        "첨부 방식 선택",
+                        options=["zip_only", "all", "files_only"],
+                        format_func=lambda x: {
+                            "all": "개별 파일 + ZIP (모든 파일, 용량 큼)",
+                            "zip_only": "ZIP 파일만 (깔끔, 용량 작음)",
+                            "files_only": "개별 파일만 (ZIP 제외)"
+                        }[x],
+                        index=0,
+                        label_visibility="collapsed",
+                        key="email_attach"
+                    )
                     
-                    with st.expander("⚙️ 상세 옵션", expanded=False):
-                        st.markdown("##### 📄 출력 형식")
-                        out_docx = st.checkbox("Word 문서", value=True, key="opt_docx")
-                        out_md = st.checkbox("Markdown 문서", value=False, key="opt_md")
-                        out_txt = st.checkbox("Text 파일", value=False, key="opt_txt")
-                        
+                    if is_audio:
                         st.markdown("")
-                        st.markdown("##### 📧 이메일 첨부 방식")
-                        email_attach = st.radio(
-                            "첨부 방식 선택",
-                            options=["zip_only", "all", "files_only"],
+                        st.markdown("##### 🎤 음성 인식 모델")
+                        stt_model = st.radio(
+                            "음성 인식 모델 선택",
+                            options=["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"],
                             format_func=lambda x: {
-                                "all": "개별 파일 + ZIP (모든 파일, 용량 큼)",
-                                "zip_only": "ZIP 파일만 (깔끔, 용량 작음)",
-                                "files_only": "개별 파일만 (ZIP 제외)"
+                                "gpt-4o-transcribe": "GPT-4o ($0.006/분) - 최고 정확도",
+                                "whisper-1": "Whisper ($0.006/분) - 안정적",
+                                "gpt-4o-mini-transcribe": "GPT-4o Mini ($0.003/분) - 저렴"
                             }[x],
                             index=0,
                             label_visibility="collapsed",
-                            key="email_attach"
+                            key="stt_model"
                         )
-                        
-                        if is_audio:
-                            st.markdown("")
-                            st.markdown("##### 🎤 음성 인식 모델")
-                            stt_model = st.radio(
-                                "음성 인식 모델 선택",
-                                options=["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"],
-                                format_func=lambda x: {
-                                    "gpt-4o-transcribe": "GPT-4o ($0.006/분) - 최고 정확도",
-                                    "whisper-1": "Whisper ($0.006/분) - 안정적",
-                                    "gpt-4o-mini-transcribe": "GPT-4o Mini ($0.003/분) - 저렴"
-                                }[x],
-                                index=0,
-                                label_visibility="collapsed",
-                                key="stt_model"
-                            )
-                        else:
-                            stt_model = "whisper-1"
+                    else:
+                        stt_model = "whisper-1"
+                
+                if 'email_attach' not in locals():
+                    email_attach = "zip_only"
+                
+                st.markdown("---")
+                
+                can_start = len(emails) > 0
+                
+                if not can_start:
+                    st.warning("📧 결과를 받을 이메일을 입력해주세요.")
+                
+                if st.button("🚀 시작", type="primary", use_container_width=True, disabled=not can_start):
+                    job_id = create_job_id()
                     
-                    if 'email_attach' not in locals():
-                        email_attach = "zip_only"
+                    files_data = []
+                    for f in files:
+                        files_data.append({
+                            'filename': f.name,
+                            'data': f.read()
+                        })
+                        f.seek(0)
                     
-                    st.markdown("---")
+                    config = {
+                        'file_type': file_type,
+                        'do_transcript': do_transcript,
+                        'do_summary': do_summary,
+                        'out_md': out_md,
+                        'out_docx': out_docx,
+                        'out_txt': out_txt,
+                        'stt_model': stt_model,
+                        'email_attach': email_attach,
+                        'emails': emails,
+                        'files': [f.name for f in files]
+                    }
                     
-                    can_start = len(emails) > 0
+                    st.session_state.active_job_id = job_id
                     
-                    if not can_start:
-                        st.warning("📧 결과를 받을 이메일을 입력해주세요.")
+                    thread = threading.Thread(
+                        target=process_job_background,
+                        args=(job_id, files_data, config),
+                        daemon=True
+                    )
+                    thread.start()
                     
-                    if st.button("🚀 시작", type="primary", use_container_width=True, disabled=not can_start):
-                        job_id = create_job_id()
-                        
-                        files_data = []
-                        for f in files:
-                            files_data.append({
-                                'filename': f.name,
-                                'data': f.read()
-                            })
-                            f.seek(0)
-                        
-                        config = {
-                            'file_type': file_type,
-                            'do_transcript': do_transcript,
-                            'do_summary': do_summary,
-                            'out_md': out_md,
-                            'out_docx': out_docx,
-                            'out_txt': out_txt,
-                            'stt_model': stt_model,
-                            'email_attach': email_attach,
-                            'emails': emails,
-                            'files': [f.name for f in files]
-                        }
-                        
-                        st.session_state.active_job_id = job_id
-                        
-                        thread = threading.Thread(
-                            target=process_job_background,
-                            args=(job_id, files_data, config),
-                            daemon=True
-                        )
-                        thread.start()
-                        
-                        st.rerun()
-        
-        show_recent_jobs()
-        
-        st.markdown("---")
-        usage = get_daily_usage()
-        col1, col2 = st.columns(2)
-        with col1:
-            st.caption(f"🎤 음성: {usage.get('audio', 0)}/{DAILY_LIMIT_AUDIO}개")
-        with col2:
-            st.caption(f"📄 텍스트: {usage.get('text', 0)}/{DAILY_LIMIT_TEXT}개")
+                    st.rerun()
+    
+    show_recent_jobs()
+    
+    st.markdown("---")
+    usage = get_daily_usage()
+    col1, col2 = st.columns(2)
+    with col1:
+        st.caption(f"🎤 음성: {usage.get('audio', 0)}/{DAILY_LIMIT_AUDIO}개")
+    with col2:
+        st.caption(f"📄 텍스트: {usage.get('text', 0)}/{DAILY_LIMIT_TEXT}개")
 
 if __name__ == "__main__":
     main()
