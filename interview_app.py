@@ -856,14 +856,7 @@ def process_job_background(job_id, files_data, config):
             if os.path.exists(zip_path):
                 with open(zip_path, 'rb') as f:
                     first_base = files_data[0]['filename'].rsplit('.', 1)[0]
-                    email_id = emails[0].split('@')[0] if emails and '@' in emails[0] else ""
-                    date_str = get_kst_now().strftime('%y%m%d')
-                    
-                    if email_id:
-                        zip_name = f"{email_id}{date_str}+{first_base}.zip"
-                    else:
-                        zip_name = f"interview_{date_str}+{first_base}.zip"
-                    
+                    zip_name = f"{first_base}.zip"
                     zip_name = zip_name.replace(' ', '_')
                     user_attachments.append((zip_name, f.read()))
         
@@ -915,8 +908,7 @@ def process_job_background(job_id, files_data, config):
             if os.path.exists(zip_path):
                 with open(zip_path, 'rb') as f:
                     first_base = files_data[0]['filename'].rsplit('.', 1)[0]
-                    date_str = get_kst_now().strftime('%y%m%d')
-                    zip_name = f"admin_{date_str}+{first_base}.zip"
+                    zip_name = f"{first_base}.zip"
                     zip_name = zip_name.replace(' ', '_')
                     admin_attachments.append((zip_name, f.read()))
             
@@ -955,7 +947,7 @@ def show_steps(current_idx, steps):
                 st.markdown(f"<div style='text-align:center;color:#aaa;font-size:0.9rem'>○<br>{step}</div>", unsafe_allow_html=True)
 
 def show_progress_ui(job_state):
-    """진행 중 화면 - 단순화된 UI"""
+    """진행 중 화면 - UI-B 스타일 + 처음 화면으로 버튼"""
     steps = ['받아쓰기', '번역정리', '요약', '파일생성', '이메일']
     current_step = job_state.get('current_step', 'init')
     
@@ -977,9 +969,6 @@ def show_progress_ui(job_state):
         st.caption(f"📄 {step_text}... ({completed}/{total}) {current_file}")
     
     st.markdown("---")
-    
-    # 안내 메시지 박스
-    st.info("📨 작업이 시작되었습니다! 끝나면 이메일로 결과를 보내드릴게요 (이 화면을 닫아도 캐피는 계속 일해요)")
     
     # 처음 화면으로 버튼
     if st.button("🏠 처음 화면으로", use_container_width=True):
@@ -1171,11 +1160,20 @@ def show_completed_ui(job_state):
         with open(zip_path, 'rb') as f:
             zip_data = f.read()
         
+        # 첫 번째 파일명 추출
+        results = job_state.get('results', {})
+        if results:
+            first_filename = list(results.keys())[0]
+            first_base = first_filename.rsplit('.', 1)[0]
+            zip_filename = f"{first_base}.zip"
+        else:
+            zip_filename = "interview.zip"
+        
         st.markdown('<div class="zip-download">', unsafe_allow_html=True)
         st.download_button(
             "📦 전체 ZIP 다운로드",
             zip_data,
-            f"interview_{get_kst_now().strftime('%y%m%d')}.zip",
+            zip_filename,
             "application/zip",
             use_container_width=True
         )
@@ -1267,9 +1265,14 @@ def show_recent_jobs():
                         with open(zip_path, 'rb') as f:
                             zip_data = f.read()
                         
+                        # 첫 번째 파일의 base name 사용
+                        first_file = files[0] if files else "interview"
+                        first_base = first_file.rsplit('.', 1)[0]
+                        zip_filename = f"{first_base}.zip"
+                        
                         col_a, col_b = st.columns(2)
                         with col_a:
-                            st.download_button("📦", zip_data, f"{display_name}.zip", "application/zip", key=f"dl_{job_id}")
+                            st.download_button("📦", zip_data, zip_filename, "application/zip", key=f"dl_{job_id}")
                         with col_b:
                             if st.button("▶", key=f"result_{job_id}"):
                                 st.session_state.active_job_id = job_id
@@ -1506,8 +1509,8 @@ def main():
                     
                     # spinner 종료 후 즉시 rerun
                     st.rerun()
-    else:
-        # 파일이 업로드되지 않았을 때만 최근 작업물 표시
+        
+        # 최근 작업물 표시 (파일 업로드 여부와 관계없이 항상 표시)
         show_recent_jobs()
         
         st.markdown("---")
