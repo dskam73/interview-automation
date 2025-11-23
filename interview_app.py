@@ -536,22 +536,21 @@ def send_email(to_emails, subject, body, attachments=None):
                 part.set_payload(data)
                 encoders.encode_base64(part)
                 
-                # ✅ 수정: RFC 2231 인코딩으로 non-ASCII 파일명 처리
+                # ✅ Gmail 완벽 호환: RFC 2231 직접 구현
                 try:
-                    # ASCII 파일명인지 확인
+                    # ASCII 파일명은 그대로
                     fname.encode('ascii')
                     part.add_header(
                         'Content-Disposition',
-                        'attachment',
-                        filename=fname
+                        f'attachment; filename="{fname}"'
                     )
                 except UnicodeEncodeError:
-                    # non-ASCII 파일명: RFC 2231 인코딩 사용
-                    encoded_name = urllib.parse.quote(fname)
+                    # non-ASCII: RFC 2231 표준 형식
+                    # "filename*=UTF-8''encoded_name" 형식
+                    encoded = urllib.parse.quote(fname, safe='')
                     part.add_header(
                         'Content-Disposition',
-                        'attachment',
-                        filename=('utf-8', '', encoded_name)
+                        f"attachment; filename*=UTF-8''{encoded}"
                     )
                 
                 msg.attach(part)
