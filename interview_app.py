@@ -1310,6 +1310,9 @@ def main():
     
     active_job_id = st.session_state.get('active_job_id')
     
+    # 디버깅
+    st.sidebar.write(f"DEBUG: active_job_id = {active_job_id}")
+    
     if active_job_id:
         # 세션에 저장된 상태를 우선 사용 (rerun 직후)
         job_state = st.session_state.get('current_job_state')
@@ -1318,8 +1321,12 @@ def main():
         if not job_state:
             job_state = load_job_state(active_job_id)
         
+        # 디버깅
+        st.sidebar.write(f"DEBUG: job_state = {job_state.get('status') if job_state else 'None'}")
+        
         if job_state:
             if job_state['status'] == 'processing':
+                # ✅ 진행 중일 때는 무조건 이 UI만 표시
                 st.markdown("꼼꼼하게 정리해 볼게요! 기대해 주세요 📎")
                 show_progress_ui(job_state)
                 
@@ -1328,9 +1335,8 @@ def main():
                 if updated_state:
                     st.session_state.current_job_state = updated_state
                 
-                time.sleep(HEARTBEAT_INTERVAL)
-                st.rerun()
-                st.stop()  # 강제 중단 (rerun exception 보험)
+                # 주기적 새로고침 (JavaScript 메타 태그 사용)
+                st.markdown(f'<meta http-equiv="refresh" content="{HEARTBEAT_INTERVAL}">', unsafe_allow_html=True)
             elif job_state['status'] == 'completed':
                 st.markdown("모든 작업이 완료되었습니다! 이메일도 보내드렸어요 📧")
                 show_completed_ui(job_state)
