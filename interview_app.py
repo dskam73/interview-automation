@@ -1096,25 +1096,18 @@ def show_completed_ui(job_state):
         base_name = result['base_name']
         
         # 파일 헤더
-        st.markdown(f"**📄 {filename}**")
+        st.markdown(f"<div style='margin-bottom:0.3rem'>📄 <strong>{filename}</strong></div>", unsafe_allow_html=True)
         
-        # 모든 버튼을 한 줄에 배치
-        button_cols = st.columns([0.7, 0.8, 0.8, 0.8, 0.8, 0.8, 6])
-        col_idx = 0
+        # 인라인 버튼 생성
+        download_links = []
         
         # Whisper 원본
         if result.get('whisper'):
             whisper_file = os.path.join(results_dir, f"{base_name}_whisper.txt")
             if os.path.exists(whisper_file):
                 with open(whisper_file, 'rb') as f:
-                    with button_cols[col_idx]:
-                        st.download_button(
-                            "[원본]",
-                            f.read(),
-                            f"{base_name}_whisper.txt",
-                            key=f"w_{base_name}"
-                        )
-                        col_idx += 1
+                    whisper_data = f.read()
+                download_links.append(('📥 원본', whisper_data, f"{base_name}_whisper.txt", f"w_{base_name}"))
         
         # 트랜스크립트
         if result.get('transcript'):
@@ -1124,36 +1117,15 @@ def show_completed_ui(job_state):
                     transcript_content = f.read()
                 
                 if out_md:
-                    with button_cols[col_idx]:
-                        st.download_button(
-                            "[정리MD]",
-                            transcript_content.encode('utf-8'),
-                            f"{base_name}.md",
-                            key=f"tmd_{base_name}"
-                        )
-                        col_idx += 1
+                    download_links.append(('📝 정리MD', transcript_content.encode('utf-8'), f"{base_name}.md", f"tmd_{base_name}"))
                 
                 if out_docx:
                     docx_bytes = create_docx(transcript_content, base_name)
-                    with button_cols[col_idx]:
-                        st.download_button(
-                            "[정리DOC]",
-                            docx_bytes,  # bytes 직접 사용
-                            f"{base_name}.docx",
-                            key=f"tdoc_{base_name}"
-                        )
-                        col_idx += 1
+                    download_links.append(('📝 정리DOC', docx_bytes, f"{base_name}.docx", f"tdoc_{base_name}"))
                 
                 if out_txt:
                     plain = re.sub(r'[#*_\-]+', '', transcript_content)
-                    with button_cols[col_idx]:
-                        st.download_button(
-                            "[정리TXT]",
-                            plain.encode('utf-8'),
-                            f"{base_name}.txt",
-                            key=f"ttxt_{base_name}"
-                        )
-                        col_idx += 1
+                    download_links.append(('📝 정리TXT', plain.encode('utf-8'), f"{base_name}.txt", f"ttxt_{base_name}"))
         
         # 요약
         if result.get('summary'):
@@ -1163,36 +1135,31 @@ def show_completed_ui(job_state):
                     summary_content = f.read()
                 
                 if out_md:
-                    with button_cols[col_idx]:
-                        st.download_button(
-                            "[요약MD]",
-                            summary_content.encode('utf-8'),
-                            f"#{base_name}.md",
-                            key=f"smd_{base_name}"
-                        )
-                        col_idx += 1
+                    download_links.append(('📋 요약MD', summary_content.encode('utf-8'), f"#{base_name}.md", f"smd_{base_name}"))
                 
                 if out_docx:
                     docx_bytes = create_docx(summary_content, f"#{base_name}")
-                    with button_cols[col_idx]:
-                        st.download_button(
-                            "[요약DOC]",
-                            docx_bytes,  # bytes 직접 사용
-                            f"#{base_name}.docx",
-                            key=f"sdoc_{base_name}"
-                        )
-                        col_idx += 1
+                    download_links.append(('📋 요약DOC', docx_bytes, f"#{base_name}.docx", f"sdoc_{base_name}"))
                 
                 if out_txt:
                     plain = re.sub(r'[#*_\-]+', '', summary_content)
-                    with button_cols[col_idx]:
-                        st.download_button(
-                            "[요약TXT]",
-                            plain.encode('utf-8'),
-                            f"#{base_name}.txt",
-                            key=f"stxt_{base_name}"
-                        )
-                        col_idx += 1
+                    download_links.append(('📋 요약TXT', plain.encode('utf-8'), f"#{base_name}.txt", f"stxt_{base_name}"))
+        
+        # 인라인으로 버튼 배치
+        if download_links:
+            # 버튼 개수에 따라 동적으로 컬럼 생성
+            num_buttons = len(download_links)
+            cols = st.columns(num_buttons)
+            
+            for idx, (label, data, fname, key) in enumerate(download_links):
+                with cols[idx]:
+                    st.download_button(
+                        label,
+                        data,
+                        fname,
+                        key=key,
+                        use_container_width=True
+                    )
         
         st.markdown("<br>", unsafe_allow_html=True)
     
@@ -1349,19 +1316,19 @@ def main():
                 show_progress_ui(job_state)
                 time.sleep(HEARTBEAT_INTERVAL)
                 st.rerun()
-                return  # ✅ 즉시 함수 종료!
+                return  # rerun 전에 return 추가
             elif job_state['status'] == 'completed':
                 st.markdown("모든 작업이 완료되었습니다! 이메일도 보내드렸어요 📧")
                 show_completed_ui(job_state)
+                return  # 완료 화면 후에도 return
             elif job_state['status'] == 'error':
                 st.markdown("작업 중 문제가 발생했어요 😢")
                 show_error_ui(job_state)
+                return  # 에러 화면 후에도 return
         else:
             del st.session_state['active_job_id']
             st.rerun()
-        
-        # active_job_id가 있으면 여기서 함수 종료 (파일 업로드 UI 표시 안함)
-        return
+            return  # rerun 전에 return 추가
     
     # 여기서부터는 active_job_id가 없을 때만 실행됨
     st.markdown("퇴근하실 때 정리를 부탁하고 창을 열어두면 아침에 메일로 받아 보실 수 있어요 ^^*...")
