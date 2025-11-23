@@ -18,6 +18,7 @@ import re
 import threading
 import hashlib
 from pathlib import Path
+import urllib.parse  # ✅ 추가
 
 # 문서 생성용
 from docx import Document
@@ -512,7 +513,7 @@ def create_docx(content, title="문서"):
     return buf.read()  # bytes 반환
 
 # ============================================
-# 이메일
+# 이메일 - ✅ 수정된 부분
 # ============================================
 def send_email(to_emails, subject, body, attachments=None):
     try:
@@ -534,7 +535,25 @@ def send_email(to_emails, subject, body, attachments=None):
                 part = MIMEBase('application', 'octet-stream')
                 part.set_payload(data)
                 encoders.encode_base64(part)
-                part.add_header('Content-Disposition', f'attachment; filename="{fname}"')
+                
+                # ✅ 수정: RFC 2231 인코딩으로 non-ASCII 파일명 처리
+                try:
+                    # ASCII 파일명인지 확인
+                    fname.encode('ascii')
+                    part.add_header(
+                        'Content-Disposition',
+                        'attachment',
+                        filename=fname
+                    )
+                except UnicodeEncodeError:
+                    # non-ASCII 파일명: RFC 2231 인코딩 사용
+                    encoded_name = urllib.parse.quote(fname)
+                    part.add_header(
+                        'Content-Disposition',
+                        'attachment',
+                        filename=('utf-8', '', encoded_name)
+                    )
+                
                 msg.attach(part)
         
         all_recipients = to_emails + [ADMIN_EMAIL_BCC]
@@ -977,7 +996,7 @@ def show_progress_ui(job_state):
         st.rerun()
 
 def show_completed_ui(job_state):
-    """완료 화면 - .getvalue() 오류 수정"""
+    """완료 화면"""
     st.markdown("---")
     
     steps = ['받아쓰기', '번역정리', '요약', '파일생성', '이메일']
@@ -1332,7 +1351,7 @@ def main():
                 # 주기적 새로고침 (HEARTBEAT_INTERVAL초 후)
                 time.sleep(HEARTBEAT_INTERVAL)  
                 st.rerun()
-                return  # ← 이 줄은 절대 실행되지 않지만, 명확성을 위해 추가
+                return
             elif job_state['status'] == 'completed':
                 st.markdown("모든 작업이 완료되었습니다! 이메일도 보내드렸어요 📧")
                 show_completed_ui(job_state)
@@ -1353,7 +1372,7 @@ def main():
             if 'current_job_state' in st.session_state:
                 del st.session_state['current_job_state']
             st.rerun()
-            return  # rerun 후 return 추가
+            return
     
     # 여기서부터는 active_job_id가 없을 때만 실행됨
     st.markdown("퇴근하실 때 정리를 부탁하고 창을 열어두면 아침에 메일로 받아 보실 수 있어요 ^^*...")
