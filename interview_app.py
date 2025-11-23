@@ -1521,6 +1521,38 @@ def main():
                 if st.button("🚀 시작", type="primary", use_container_width=True, disabled=not can_start):
                     job_id = create_job_id()
                     
+                    # Job 초기 상태 즉시 저장
+                    initial_state = {
+                        'status': 'processing',
+                        'job_id': job_id,
+                        'start_time': get_kst_now().isoformat(),
+                        'current_step': 'init',
+                        'current_file': '',
+                        'progress': 0,
+                        'completed_files': 0,
+                        'total_files': len(files),
+                        'files': [f.name for f in files],
+                        'results': {},
+                        'total_audio_min': 0,
+                        'total_in_tok': 0,
+                        'total_out_tok': 0,
+                        'error': None,
+                        'config': {
+                            'file_type': file_type,
+                            'do_transcript': do_transcript,
+                            'do_summary': do_summary,
+                            'out_md': out_md,
+                            'out_docx': out_docx,
+                            'out_txt': out_txt,
+                            'stt_model': stt_model,
+                            'email_attach': email_attach,
+                            'emails': emails,
+                            'files': [f.name for f in files]
+                        }
+                    }
+                    save_job_state(job_id, initial_state)
+                    
+                    # 파일 데이터 준비
                     files_data = []
                     for f in files:
                         files_data.append({
@@ -1542,8 +1574,10 @@ def main():
                         'files': [f.name for f in files]
                     }
                     
+                    # 세션에 job_id 저장 (진행 화면으로 전환)
                     st.session_state.active_job_id = job_id
                     
+                    # 백그라운드 스레드 시작
                     thread = threading.Thread(
                         target=process_job_background,
                         args=(job_id, files_data, config),
@@ -1551,6 +1585,7 @@ def main():
                     )
                     thread.start()
                     
+                    # 즉시 rerun하여 진행 화면 표시
                     st.rerun()
     
     show_recent_jobs()
